@@ -84,6 +84,68 @@ These features require root/admin and service installation, so they're validated
 
 ---
 
+## 🧪 Interactive Testing with --test-query
+
+Test whether specific domains would be blocked at any given time **without installing the service or requiring privileges**.
+
+### Quick Test
+Check if a domain is blocked at a specific time:
+``` bash
+./distractions-free --test-query "2024-04-01 10:30" youtube.com
+```
+
+### Output Example
+```
+============================================================
+Test Query Result
+============================================================
+Time:          2024-04-01 10:30 (Monday)
+Domain:        youtube.com
+------------------------------------------------------------
+Status:        🚫 BLOCKED
+Response:      0.0.0.0 (blocking response)
+------------------------------------------------------------
+Applicable Rules:
+  Domain: youtube.com
+    ✓ Blocked on Monday from 09:00 to 17:00 (ACTIVE)
+------------------------------------------------------------
+============================================================
+```
+
+### Time Format
+Use **`2006-01-02 15:04`** format (YYYY-MM-DD HH:MM in 24-hour time):
+- Example: `2024-04-01 10:30` = Monday, April 1, 2024 at 10:30 AM
+- Example: `2024-04-01 09:00` = Monday, April 1, 2024 at 9:00 AM (start of block)
+
+### Test Cases
+
+**Check if a domain is allowed:**
+``` bash
+./distractions-free --test-query "2024-04-06 10:30" youtube.com
+```
+Output: `✓ ALLOWED (forwarded to upstream DNS)` with DNS response
+
+**Test warning trigger (3 minutes before block):**
+``` bash
+./distractions-free --test-query "2024-04-01 08:57" youtube.com
+```
+Output: Shows `⚠️ Warning will trigger 3 minutes before block!`
+
+**Test different domains and times:**
+``` bash
+./distractions-free --test-query "2024-04-01 17:00" facebook.com  # After block ends
+./distractions-free --test-query "2024-04-02 10:30" linkedin.com  # Tuesday schedule
+```
+
+### Why This Feature is Useful
+- ✅ **Verify your rules**: Confirm blocking schedules work as expected
+- ✅ **No system impact**: Uses local config file, no service needed
+- ✅ **Real DNS queries**: Shows actual upstream DNS responses
+- ✅ **Debug schedules**: Check if a specific time/domain/day combination triggers blocking
+- ✅ **No privileges**: Runs as regular user with `--no-service` mode
+
+---
+
 ## 🚀 Build & Installation
 
 ### 1. Compile the Binary
