@@ -20,42 +20,56 @@ func UpdateBlockedDomains(newBlocked map[string]bool) {
 	blockedDomains = newBlocked
 }
 
-func handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
+// GetDNSResponse is a testable function that processes DNS requests without binding to a port.
+// It returns the appropriate DNS response based on blocking rules and upstream DNS queries.
+func GetDNSResponse(r *dns.Msg, blockedDomainsList map[string]bool, primaryDNS, backupDNS string) (*dns.Msg, error) {
 	m := new(dns.Msg)
 	m.SetReply(r)
 	m.Compress = false
 
 	if len(r.Question) == 0 {
-		w.WriteMsg(m)
-		return
+		return m, nil
 	}
 
 	q := r.Question[0]
 	domain := strings.TrimSuffix(q.Name, ".")
 
-	blockMu.RLock()
-	isBlocked := blockedDomains[domain]
-	blockMu.RUnlock()
+	// Check if domain is blocked
+	isBlocked := blockedDomainsList[domain]
 
 	if isBlocked && q.Qtype == dns.TypeA {
 		rr, _ := dns.NewRR(q.Name + " 60 IN A 0.0.0.0")
 		m.Answer = append(m.Answer, rr)
-		w.WriteMsg(m)
+		return m, nil
+	}
+
+	// Forward to upstream DNS
+	c := new(dns.Client)
+
+	in, _, err := c.Exchange(r, primaryDNS)
+	if err != nil {
+		in, _, err = c.Exchange(r, backupDNS)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return in, nil
+}
+
+func handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
+	blockMu.RLock()
+	blockedCopy := blockedDomains
+	blockMu.RUnlock()
+
+	cfg := config.GetConfig()
+
+	m, err := GetDNSResponse(r, blockedCopy, cfg.Settings.PrimaryDNS, cfg.Settings.BackupDNS)
+	if err != nil {
+		dns.HandleFailed(w, r)
 		return
 	}
 
-	cfg := config.GetConfig()
-	c := new(dns.Client)
-
-	in, _, err := c.Exchange(r, cfg.Settings.PrimaryDNS)
-	if err != nil {
-		in, _, err = c.Exchange(r, cfg.Settings.BackupDNS)
-		if err != nil {
-			dns.HandleFailed(w, r)
-			return
-		}
-	}
-	w.WriteMsg(in)
+	w.WriteMsg(m)
 }
 
 func StartDNSServer() {

@@ -15,6 +15,58 @@ import (
 
 var activeBlocks = make(map[string]bool)
 
+// EvaluateRulesAtTime evaluates blocking rules at a specific time and returns blocked domains.
+// This is the testable function that doesn't depend on time.Now().
+func EvaluateRulesAtTime(t time.Time, cfg config.Config) map[string]bool {
+	currentDay := t.Weekday().String()
+	currentTime := t.Format("15:04")
+
+	newBlocked := make(map[string]bool)
+
+	// Evaluate times
+	for _, rule := range cfg.Rules {
+		if !rule.IsActive {
+			continue
+		}
+		if slots, exists := rule.Schedules[currentDay]; exists {
+			for _, slot := range slots {
+				// Check active blocks
+				if currentTime >= slot.Start && currentTime < slot.End {
+					newBlocked[rule.Domain] = true
+					break
+				}
+			}
+		}
+	}
+
+	return newBlocked
+}
+
+// CheckWarningDomainsAtTime checks if any domains should trigger 3-minute warnings at a specific time.
+// This is the testable function that doesn't depend on time.Now().
+func CheckWarningDomainsAtTime(t time.Time, cfg config.Config) []string {
+	currentDay := t.Weekday().String()
+	futureTime := t.Add(3 * time.Minute).Format("15:04")
+
+	var warningDomains []string
+
+	// Check for 3-minute warnings
+	for _, rule := range cfg.Rules {
+		if !rule.IsActive {
+			continue
+		}
+		if slots, exists := rule.Schedules[currentDay]; exists {
+			for _, slot := range slots {
+				if futureTime == slot.Start {
+					warningDomains = append(warningDomains, rule.Domain)
+				}
+			}
+		}
+	}
+
+	return warningDomains
+}
+
 func Start() {
 	ticker := time.NewTicker(1 * time.Minute)
 	go func() {
@@ -28,41 +80,23 @@ func Start() {
 func evaluateRules() {
 	cfg := config.GetConfig()
 	now := time.Now()
-	currentDay := now.Weekday().String()
-	currentTime := now.Format("15:04")
-	futureTime := now.Add(3 * time.Minute).Format("15:04")
 
-	newBlocked := make(map[string]bool)
-	var warningDomains[]string
-	var newlyBlockedDomains[]string
+	newBlocked := EvaluateRulesAtTime(now, cfg)
+	warningDomains := CheckWarningDomainsAtTime(now, cfg)
+
+	var newlyBlockedDomains []string
 	requiresFlush := false
-
-	// Evaluate times
-	for _, rule := range cfg.Rules {
-		if !rule.IsActive {
-			continue
-		}
-		if slots, exists := rule.Schedules[currentDay]; exists {
-			for _, slot := range slots {
-				// Check for 3-minute warning
-				if futureTime == slot.Start {
-					warningDomains = append(warningDomains, rule.Domain)
-				}
-				// Check active blocks
-				if currentTime >= slot.Start && currentTime < slot.End {
-					newBlocked[rule.Domain] = true
-					if !activeBlocks[rule.Domain] {
-						newlyBlockedDomains = append(newlyBlockedDomains, rule.Domain)
-					}
-					break
-				}
-			}
-		}
-	}
 
 	// Check if state changed (domains added or removed)
 	if len(newBlocked) != len(activeBlocks) || len(newlyBlockedDomains) > 0 {
-		requiresFlush = true
+		for domain := range newBlocked {
+			if !activeBlocks[domain] {
+				newlyBlockedDomains = append(newlyBlockedDomains, domain)
+			}
+		}
+		if len(newlyBlockedDomains) > 0 {
+			requiresFlush = true
+		}
 	}
 
 	// Apply states
@@ -103,18 +137,18 @@ func runAsMacUser(scriptContent string) {
 	}
 
 	scriptPath := "/tmp/df_script.scpt"
-	os.WriteFile(scriptPath,[]byte(scriptContent), 0644)
+	os.WriteFile(scriptPath, []byte(scriptContent), 0644)
 	exec.Command("su", "-", user, "-c", "osascript "+scriptPath).Run()
 }
 
-func runMacOSWarning(domains[]string) {
+func runMacOSWarning(domains []string) {
 	msg := fmt.Sprintf("Tabs for %s will close in 3 minutes.", strings.Join(domains, ", "))
 	script := fmt.Sprintf(`display notification "%s" with title "Distractions-Free" subtitle "Upcoming Block" sound name "Basso"`, msg)
 	runAsMacUser(script)
 }
 
 func closeMacOSTabs(domains []string) {
-	var quotedDomains[]string
+	var quotedDomains []string
 	for _, d := range domains {
 		quotedDomains = append(quotedDomains, fmt.Sprintf(`"%s"`, strings.TrimPrefix(d, "www.")))
 	}

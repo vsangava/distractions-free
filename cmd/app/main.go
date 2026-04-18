@@ -42,6 +42,14 @@ func (p *program) Stop(s service.Service) error {
 }
 
 func main() {
+	// Run as regular program without service
+	if len(os.Args) > 1 && os.Args[1] == "--no-service" {
+		config.UseLocalConfig = true
+		prg := &program{}
+		prg.run()
+		return
+	}
+
 	svcConfig := &service.Config{
 		Name:        "DistractionsFree",
 		DisplayName: "Distractions Free DNS Proxy",

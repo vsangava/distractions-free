@@ -23,6 +23,67 @@ brew install go
 
 ---
 
+## 🧪 Testing
+
+The codebase includes comprehensive unit tests for the core blocking and scheduling logic that run **without requiring privileges, port binding, or system modifications**.
+
+### Run All Tests
+``` bash
+go test ./internal/... -v
+```
+
+### Run Specific Test Suites
+
+**Scheduler Tests** (time-based blocking rules evaluation):
+``` bash
+go test ./internal/scheduler -v
+```
+- Tests rule evaluation at specific times
+- Validates blocking windows (start/end times)
+- Tests warning triggers (3-minute pre-block notifications)
+- Tests all weekday schedules and edge cases
+
+**DNS Proxy Tests** (DNS request handling and forwarding):
+``` bash
+go test ./internal/proxy -v
+```
+- Tests blocked domain responses (returns `0.0.0.0`)
+- Tests allowed domain forwarding to **real upstream DNS servers** (Google 8.8.8.8, Cloudflare 1.1.1.1)
+- Tests DNS failover (primary → backup DNS)
+- Tests various DNS record types (A, AAAA, MX, CNAME)
+- Tests DNS reply formatting and TTL
+
+### Test Coverage
+**17 Scheduler Tests:**
+- Blocking logic during/outside schedules
+- Multiple domains and time slots
+- All 7 weekdays
+- Warning notification timing
+- Edge cases (exact start/end times)
+
+**16 DNS Proxy Tests:**
+- Domain blocking and forwarding
+- Upstream DNS queries
+- Failover behavior
+- Record type handling
+- TTL and reply flag validation
+
+### Why These Tests Work Without Privileges
+- ✅ **Testable pure functions**: Core logic extracted to accept time/config as parameters
+- ✅ **Real upstream DNS**: Tests query actual DNS servers to verify forwarding works
+- ✅ **No port binding**: DNS logic tested without binding to port 53
+- ✅ **No system modifications**: No DNS cache flushing or system DNS changes
+- ✅ **No mocking**: Tests use real DNS responses for authenticity
+
+### What's NOT Tested (Requires Privileges)
+These features require root/admin and service installation, so they're validated manually:
+- ❌ Port 53 binding
+- ❌ System DNS cache flushing
+- ❌ Browser tab closing
+- ❌ Service installation/management
+
+---
+
 ## 🚀 Build & Installation
 
 ### 1. Compile the Binary

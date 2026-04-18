@@ -30,25 +30,35 @@ type Config struct {
 }
 
 var (
-	AppConfig Config
-	mu        sync.RWMutex
+	AppConfig      Config
+	mu             sync.RWMutex
+	UseLocalConfig bool
 )
 
-func GetConfigFilePath() string {
+func GetConfigFilePath() (string, error) {
 	var dir string
-	if runtime.GOOS == "darwin" {
+	if UseLocalConfig {
+		dir = "."
+	} else if runtime.GOOS == "darwin" {
 		dir = "/Library/Application Support/DistractionsFree"
 	} else if runtime.GOOS == "windows" {
 		dir = filepath.Join(os.Getenv("PROGRAMDATA"), "DistractionsFree")
 	} else {
 		dir = "/etc/distractionsfree"
 	}
-	os.MkdirAll(dir, 0755)
-	return filepath.Join(dir, "config.json")
+	if dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return "", err
+		}
+	}
+	return filepath.Join(dir, "config.json"), nil
 }
 
 func LoadConfig() error {
-	path := GetConfigFilePath()
+	path, err := GetConfigFilePath()
+	if err != nil {
+		return err
+	}
 	mu.Lock()
 	defer mu.Unlock()
 
