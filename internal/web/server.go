@@ -22,7 +22,8 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(cfg)
 }
 
-func validatePostedConfig(cfg config.Config) error {
+// ValidatePostedConfig validates a posted config (exported for testing).
+func ValidatePostedConfig(cfg config.Config) error {
 	validDays := map[string]bool{
 		"Monday":    true,
 		"Tuesday":   true,
@@ -47,6 +48,9 @@ func validatePostedConfig(cfg config.Config) error {
 			for _, slot := range slots {
 				if slot.Start == "" || slot.End == "" {
 					return errors.New("schedule timeslot must include start and end")
+				}
+				if slot.Start >= slot.End {
+					return errors.New("schedule timeslot start time must be before end time")
 				}
 			}
 		}
@@ -86,7 +90,7 @@ func TestQueryHandler(w http.ResponseWriter, r *http.Request) {
 				})
 				return
 			}
-			if err := validatePostedConfig(cfg); err != nil {
+			if err := ValidatePostedConfig(cfg); err != nil {
 				w.WriteHeader(http.StatusBadRequest)
 				json.NewEncoder(w).Encode(map[string]string{
 					"error": "Invalid config: " + err.Error(),

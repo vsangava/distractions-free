@@ -505,6 +505,9 @@
                         if (!slot || typeof slot !== 'object' || typeof slot.start !== 'string' || typeof slot.end !== 'string') {
                             return { valid: false, error: 'Each schedule slot for ' + rule.domain + ' on ' + day + ' must include start and end strings' };
                         }
+                        if (slot.start >= slot.end) {
+                            return { valid: false, error: 'Schedule slot start time must be before end time for ' + rule.domain + ' on ' + day };
+                        }
                     }
                 }
             }
