@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 )
 
 var activeBlocks = make(map[string]bool)
+var lastWarningTime = make(map[string]time.Time) // Track last warning time per domain
 
 // ScriptExecutor interface for testing AppleScript execution
 type ScriptExecutor interface {
@@ -167,22 +169,40 @@ func EvaluateRulesAtTime(t time.Time, cfg config.Config) map[string]bool {
 	return newBlocked
 }
 
-// CheckWarningDomainsAtTime checks if any domains should trigger 3-minute warnings at a specific time.
+// CheckWarningDomainsAtTime checks if any domains should trigger warnings within 3 minutes of block start.
+// Warnings are triggered for any time within 3 minutes before a scheduled block.
 // This is the testable function that doesn't depend on time.Now().
 func CheckWarningDomainsAtTime(t time.Time, cfg config.Config) []string {
 	currentDay := t.Weekday().String()
-	futureTime := t.Add(3 * time.Minute).Format("15:04")
 
 	var warningDomains []string
 
-	// Check for 3-minute warnings
+	// Check for warnings within 3-minute window before block start
 	for _, rule := range cfg.Rules {
 		if !rule.IsActive {
 			continue
 		}
 		if slots, exists := rule.Schedules[currentDay]; exists {
 			for _, slot := range slots {
-				if futureTime == slot.Start {
+				// Parse block start time
+				parts := strings.Split(slot.Start, ":")
+				if len(parts) != 2 {
+					continue
+				}
+				blockHour, errH := strconv.Atoi(parts[0])
+				blockMin, errM := strconv.Atoi(parts[1])
+				if errH != nil || errM != nil {
+					continue
+				}
+
+				// Create block start time for today
+				blockTime := time.Date(t.Year(), t.Month(), t.Day(), blockHour, blockMin, 0, 0, t.Location())
+
+				// Calculate warning window: 3 minutes before block start
+				warningStart := blockTime.Add(-3 * time.Minute)
+
+				// Warn if current time is within [warningStart, blockTime)
+				if (t.After(warningStart) || t.Equal(warningStart)) && t.Before(blockTime) {
 					warningDomains = append(warningDomains, rule.Domain)
 				}
 			}
@@ -228,8 +248,20 @@ func evaluateRules() {
 	activeBlocks = newBlocked
 	proxy.UpdateBlockedDomains(newBlocked)
 
+	// Show warnings only for domains we haven't warned about recently
 	if len(warningDomains) > 0 {
-		runMacOSWarning(warningDomains)
+		var domainsToWarn []string
+		for _, domain := range warningDomains {
+			// Only warn if we haven't warned in the last minute
+			lastTime, exists := lastWarningTime[domain]
+			if !exists || now.Sub(lastTime) >= 1*time.Minute {
+				domainsToWarn = append(domainsToWarn, domain)
+				lastWarningTime[domain] = now
+			}
+		}
+		if len(domainsToWarn) > 0 {
+			runMacOSWarning(domainsToWarn)
+		}
 	}
 
 	if requiresFlush {

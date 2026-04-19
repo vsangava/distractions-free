@@ -352,6 +352,87 @@ func TestCheckWarningDomainsAtTime_MultipleWarnings(t *testing.T) {
 	}
 }
 
+func TestCheckWarningDomainsAtTime_WarningTriggersAtEveryMinute(t *testing.T) {
+	cfg := config.Config{
+		Rules: []config.Rule{
+			{
+				Domain:   "facebook.com",
+				IsActive: true,
+				Schedules: map[string][]config.TimeSlot{
+					"Monday": {
+						{Start: "10:00", End: "12:00"},
+					},
+				},
+			},
+		},
+	}
+
+	testCases := []struct {
+		name          string
+		minute        int
+		shouldWarn    bool
+		description   string
+	}{
+		{
+			name:        "3 minutes before",
+			minute:      57,
+			shouldWarn:  true,
+			description: "Monday 09:57 should warn (3 min before 10:00)",
+		},
+		{
+			name:        "2 minutes before",
+			minute:      58,
+			shouldWarn:  true,
+			description: "Monday 09:58 should warn (2 min before 10:00)",
+		},
+		{
+			name:        "1 minute before",
+			minute:      59,
+			shouldWarn:  true,
+			description: "Monday 09:59 should warn (1 min before 10:00)",
+		},
+		{
+			name:        "at block start",
+			minute:      0,
+			shouldWarn:  false,
+			description: "Monday 10:00 should NOT warn (block is active, not warning window)",
+		},
+		{
+			name:        "after block starts",
+			minute:      1,
+			shouldWarn:  false,
+			description: "Monday 10:01 should NOT warn (block already started)",
+		},
+		{
+			name:        "4 minutes before",
+			minute:      56,
+			shouldWarn:  false,
+			description: "Monday 09:56 should NOT warn (outside 3-min window)",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			testTime := time.Date(2024, time.April, 1, 9, tc.minute, 0, 0, time.UTC)
+			if tc.minute == 0 {
+				testTime = time.Date(2024, time.April, 1, 10, 0, 0, 0, time.UTC)
+			}
+			if tc.minute == 1 {
+				testTime = time.Date(2024, time.April, 1, 10, 1, 0, 0, time.UTC)
+			}
+
+			warnings := CheckWarningDomainsAtTime(testTime, cfg)
+
+			if tc.shouldWarn && len(warnings) == 0 {
+				t.Errorf("%s: expected warning, got none", tc.description)
+			}
+			if !tc.shouldWarn && len(warnings) > 0 {
+				t.Errorf("%s: expected no warning, got %v", tc.description, warnings)
+			}
+		})
+	}
+}
+
 func TestEvaluateRulesAtTime_AllWeekdaySchedules(t *testing.T) {
 	weekdays := []struct {
 		day       string
