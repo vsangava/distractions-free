@@ -23,6 +23,96 @@ brew install go
 
 ---
 
+## 🚀 Build & Installation
+
+### 1. Compile the Binary
+Clone the repository and build the self-contained executable:
+``` bash
+go build -o distractions-free ./cmd/app
+```
+
+### 2. Install the Background Service
+Because this app runs a local DNS server on port 53, it requires Root/Administrator privileges.
+``` bash
+sudo ./distractions-free install
+```
+
+### 3. Start the Service
+``` bash
+sudo ./distractions-free start
+```
+
+### 4. Point Your OS to the Proxy
+Tell macOS to use your new local DNS proxy instead of your router's default DNS.
+``` bash
+# If using Wi-Fi:
+networksetup -setdnsservers Wi-Fi 127.0.0.1
+
+# If using Ethernet:
+networksetup -setdnsservers Ethernet 127.0.0.1
+```
+
+---
+
+## ⚙️ Administration & Configuration
+
+### The Web Dashboard
+Once the service is running, you can access the local dashboard and API via:
+👉 **http://localhost:8040**
+
+### Modifying the Schedule
+By default, the daemon stores its configuration file at a secure, absolute system path:
+* **macOS:** \`/Library/Application Support/DistractionsFree/config.json\`
+* **Windows:** \`C:\ProgramData\DistractionsFree\config.json\`
+
+To update your rules, simply edit this file. The background daemon will automatically detect and apply the new rules on the next 1-minute tick!
+
+**Example Configuration:**
+``` json
+{
+  "settings": {
+    "primary_dns": "8.8.8.8",
+    "backup_dns": "1.1.1.1"
+  },
+  "rules": [
+    {
+      "domain": "facebook.com",
+      "is_active": true,
+      "schedules": {
+        "Monday": [
+          {"start": "09:00", "end": "11:00"},
+          {"start": "13:00", "end": "15:00"},
+          {"start": "16:00", "end": "17:00"}
+        ],
+        "Wednesday": [
+          {"start": "09:00", "end": "12:00"},
+          {"start": "14:00", "end": "17:00"}
+        ]
+      }
+    }
+  ]
+}
+```
+
+---
+
+## 🛑 Uninstallation & Safety
+
+**⚠️ CRITICAL:** Do not delete the application without restoring your system DNS settings first, or your internet will stop working!
+
+To safely remove the app, run the built-in uninstall commands. Our daemon is programmed to automatically restore your default macOS Wi-Fi DNS and flush your cache upon shutdown:
+``` bash
+# 1. Stop the service (Automatically restores default OS DNS)
+sudo ./distractions-free stop
+
+# 2. Remove the daemon from system startup
+sudo ./distractions-free uninstall
+
+# 3. Clean up the configuration folder
+sudo rm -rf "/Library/Application Support/DistractionsFree"
+
+---
+
 ## 🧪 Testing
 
 The codebase includes comprehensive unit tests for the core blocking and scheduling logic that run **without requiring privileges, port binding, or system modifications**.
@@ -131,6 +221,15 @@ Output: `✓ ALLOWED (forwarded to upstream DNS)` with DNS response
 ```
 Output: Shows `⚠️ Warning will trigger 3 minutes before block!`
 
+**Multi-slot schedule tests:**
+``` bash
+./distractions-free --test-query "2024-04-01 10:30" facebook.com   # Monday first block
+./distractions-free --test-query "2024-04-01 12:30" facebook.com   # Monday gap between blocks
+./distractions-free --test-query "2024-04-01 14:30" facebook.com   # Monday second block
+./distractions-free --test-query "2024-04-01 17:45" linkedin.com   # Monday evening block
+./distractions-free --test-query "2024-04-02 12:30" linkedin.com   # Tuesday midday block
+```
+
 **Test different domains and times:**
 ``` bash
 ./distractions-free --test-query "2024-04-01 17:00" facebook.com  # After block ends
@@ -144,9 +243,10 @@ Output: Shows `⚠️ Warning will trigger 3 minutes before block!`
 - ✅ **Debug schedules**: Check if a specific time/domain/day combination triggers blocking
 - ✅ **No privileges**: Runs as regular user with `--no-service` mode
 
+
 ---
 
-## 🌐 Web UI Test Mode (`--test-web`)
+## 🌐 Web UI Test Mode (`}--test-web`)
 
 A beautiful, interactive web interface for testing DNS blocking queries in your browser.
 
@@ -200,82 +300,3 @@ When testing Google on Saturday at 10:30 (allowed):
 6. Instantly see if it's blocked with rule details
 7. Modify time to test different schedules
 8. See DNS responses from real upstream servers
-
----
-
-## 🚀 Build & Installation
-
-### 1. Compile the Binary
-Clone the repository and build the self-contained executable:
-``` bash
-go build -o distractions-free ./cmd/app
-```
-
-### 2. Install the Background Service
-Because this app runs a local DNS server on port 53, it requires Root/Administrator privileges.
-``` bash
-sudo ./distractions-free install
-```
-
-### 3. Start the Service
-``` bash
-sudo ./distractions-free start
-```
-
-### 4. Point Your OS to the Proxy
-Tell macOS to use your new local DNS proxy instead of your router's default DNS.
-``` bash
-# If using Wi-Fi:
-networksetup -setdnsservers Wi-Fi 127.0.0.1
-
-# If using Ethernet:
-networksetup -setdnsservers Ethernet 127.0.0.1
-```
-
----
-
-## ⚙️ Administration & Configuration
-
-### The Web Dashboard
-Once the service is running, you can access the local dashboard and API via:
-👉 **http://localhost:8040**
-
-### Modifying the Schedule
-By default, the daemon stores its configuration file at a secure, absolute system path:
-* **macOS:** \`/Library/Application Support/DistractionsFree/config.json\`
-* **Windows:** \`C:\ProgramData\DistractionsFree\config.json\`
-
-To update your rules, simply edit this file. The background daemon will automatically detect and apply the new rules on the next 1-minute tick!
-
-**Example Configuration:**
-``` json
-{
-  "rules":[
-    {
-      "domain": "youtube.com",
-      "is_active": true,
-      "schedules": {
-        "Monday":[{"start": "09:00", "end": "17:00"}],
-        "Tuesday":[{"start": "09:00", "end": "17:00"}]
-      }
-    }
-  ]
-}
-```
-
----
-
-## 🛑 Uninstallation & Safety
-
-**⚠️ CRITICAL:** Do not delete the application without restoring your system DNS settings first, or your internet will stop working!
-
-To safely remove the app, run the built-in uninstall commands. Our daemon is programmed to automatically restore your default macOS Wi-Fi DNS and flush your cache upon shutdown:
-``` bash
-# 1. Stop the service (Automatically restores default OS DNS)
-sudo ./distractions-free stop
-
-# 2. Remove the daemon from system startup
-sudo ./distractions-free uninstall
-
-# 3. Clean up the configuration folder
-sudo rm -rf "/Library/Application Support/DistractionsFree"

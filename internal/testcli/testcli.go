@@ -15,34 +15,49 @@ const timeFormat = "2006-01-02 15:04"
 
 // QueryResult holds the structured result of a blocking query.
 type QueryResult struct {
-	Time              string                 `json:"time"`
-	Weekday           string                 `json:"weekday"`
-	Domain            string                 `json:"domain"`
-	IsBlocked         bool                   `json:"is_blocked"`
-	BlockingStatus    string                 `json:"blocking_status"`
-	DNSResponse       string                 `json:"dns_response"`
-	ApplicableRules   []RuleInfo             `json:"applicable_rules"`
-	HasWarning        bool                   `json:"has_warning"`
-	WarningMessage    string                 `json:"warning_message,omitempty"`
-	Error             string                 `json:"error,omitempty"`
+	Time            string     `json:"time"`
+	Weekday         string     `json:"weekday"`
+	Domain          string     `json:"domain"`
+	IsBlocked       bool       `json:"is_blocked"`
+	BlockingStatus  string     `json:"blocking_status"`
+	DNSResponse     string     `json:"dns_response"`
+	ApplicableRules []RuleInfo `json:"applicable_rules"`
+	HasWarning      bool       `json:"has_warning"`
+	WarningMessage  string     `json:"warning_message,omitempty"`
+	Error           string     `json:"error,omitempty"`
 }
 
 // RuleInfo holds information about an applicable blocking rule.
 type RuleInfo struct {
-	Domain    string       `json:"domain"`
+	Domain    string         `json:"domain"`
 	Schedules []ScheduleInfo `json:"schedules"`
 }
 
 // ScheduleInfo holds schedule information.
 type ScheduleInfo struct {
-	Weekday string `json:"weekday"`
-	Start   string `json:"start"`
-	End     string `json:"end"`
-	IsActive bool  `json:"is_active"`
+	Weekday  string `json:"weekday"`
+	Start    string `json:"start"`
+	End      string `json:"end"`
+	IsActive bool   `json:"is_active"`
 }
 
 // GetQueryResult returns structured test query result without printing.
 func GetQueryResult(timeStr, domain string) QueryResult {
+	// Load config
+	if err := config.LoadConfig(); err != nil {
+		return QueryResult{
+			Time:   timeStr,
+			Domain: domain,
+			Error:  fmt.Sprintf("Failed to load config: %v", err),
+		}
+	}
+
+	cfg := config.GetConfig()
+	return GetQueryResultWithConfig(timeStr, domain, cfg)
+}
+
+// GetQueryResultWithConfig returns structured test query result using provided config.
+func GetQueryResultWithConfig(timeStr, domain string, cfg config.Config) QueryResult {
 	result := QueryResult{
 		Time:   timeStr,
 		Domain: domain,
@@ -64,14 +79,6 @@ func GetQueryResult(timeStr, domain string) QueryResult {
 		return result
 	}
 	result.Domain = domain
-
-	// Load config
-	if err := config.LoadConfig(); err != nil {
-		result.Error = fmt.Sprintf("Failed to load config: %v", err)
-		return result
-	}
-
-	cfg := config.GetConfig()
 
 	// Evaluate blocking rules at this time
 	blockedDomains := scheduler.EvaluateRulesAtTime(testTime, cfg)

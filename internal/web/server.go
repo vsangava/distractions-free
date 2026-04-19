@@ -3,6 +3,7 @@ package web
 import (
 	"embed"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"log"
 	"net/http"
@@ -21,14 +22,91 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(cfg)
 }
 
+func validatePostedConfig(cfg config.Config) error {
+	validDays := map[string]bool{
+		"Monday":    true,
+		"Tuesday":   true,
+		"Wednesday": true,
+		"Thursday":  true,
+		"Friday":    true,
+		"Saturday":  true,
+		"Sunday":    true,
+	}
+
+	for _, rule := range cfg.Rules {
+		if rule.Domain == "" {
+			return errors.New("rule domain cannot be empty")
+		}
+		for day, slots := range rule.Schedules {
+			if !validDays[day] {
+				return errors.New("invalid schedule day: " + day)
+			}
+			if len(slots) == 0 {
+				return errors.New("schedule for " + day + " must contain at least one timeslot")
+			}
+			for _, slot := range slots {
+				if slot.Start == "" || slot.End == "" {
+					return errors.New("schedule timeslot must include start and end")
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // TestQueryHandler handles test queries for the web UI.
 func TestQueryHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	
+
+	// Try to get config from POST body
+	var cfg config.Config
+	var cfgFromBody bool
+	if r.Method == "POST" {
+		if err := r.ParseMultipartForm(10 << 20); err != nil && err != http.ErrNotMultipart {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Failed to parse form data: " + err.Error(),
+			})
+			return
+		}
+
+		configJSON := r.FormValue("config")
+		if configJSON == "" && r.MultipartForm != nil {
+			if values, ok := r.MultipartForm.Value["config"]; ok && len(values) > 0 {
+				configJSON = values[0]
+			}
+		}
+
+		if configJSON != "" {
+			// Parse config from form
+			if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(map[string]string{
+					"error": "Invalid config JSON: " + err.Error(),
+				})
+				return
+			}
+			if err := validatePostedConfig(cfg); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(map[string]string{
+					"error": "Invalid config: " + err.Error(),
+				})
+				return
+			}
+			cfgFromBody = true
+		}
+	}
+
+	// Fallback to loaded config if not provided
+	if !cfgFromBody {
+		config.LoadConfig()
+		cfg = config.GetConfig()
+	}
+
 	// Get query parameters
 	timeStr := r.URL.Query().Get("time")
 	domain := r.URL.Query().Get("domain")
-	
+
 	if timeStr == "" || domain == "" {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{
@@ -36,10 +114,10 @@ func TestQueryHandler(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	
-	// Get query result
-	result := testcli.GetQueryResult(timeStr, domain)
-	
+
+	// Get query result with provided config
+	result := testcli.GetQueryResultWithConfig(timeStr, domain, cfg)
+
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(result)
 }
@@ -72,7 +150,7 @@ func TestPageHandler(w http.ResponseWriter, r *http.Request) {
             background: white;
             border-radius: 12px;
             box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            max-width: 900px;
+            max-width: 1000px;
             width: 100%;
             padding: 40px;
         }
@@ -114,20 +192,26 @@ func TestPageHandler(w http.ResponseWriter, r *http.Request) {
         }
         textarea {
             resize: vertical;
-            min-height: 120px;
+            min-height: 300px;
         }
         .input-row {
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 20px;
         }
+        .button-group {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
         button {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
             border: none;
-            padding: 12px 32px;
+            padding: 10px 24px;
             border-radius: 6px;
-            font-size: 16px;
+            font-size: 14px;
             font-weight: 600;
             cursor: pointer;
             transition: transform 0.2s, box-shadow 0.2s;
@@ -138,6 +222,22 @@ func TestPageHandler(w http.ResponseWriter, r *http.Request) {
         }
         button:active {
             transform: translateY(0);
+        }
+        .button-secondary {
+            background: linear-gradient(135deg, #6c757d 0%, #5a6268 100%);
+        }
+        .config-status {
+            font-size: 12px;
+            margin-top: 4px;
+            color: #666;
+        }
+        .config-status.valid {
+            color: #28a745;
+            font-weight: 600;
+        }
+        .config-status.invalid {
+            color: #dc3545;
+            font-weight: 600;
         }
         .result-section {
             margin-top: 40px;
@@ -221,6 +321,15 @@ func TestPageHandler(w http.ResponseWriter, r *http.Request) {
             margin-top: 16px;
             font-weight: 600;
         }
+        .success-banner {
+            background: #d4edda;
+            border: 2px solid #c3e6cb;
+            color: #155724;
+            padding: 12px;
+            border-radius: 6px;
+            margin-top: 16px;
+            font-weight: 600;
+        }
         .loading {
             display: none;
             text-align: center;
@@ -244,103 +353,368 @@ func TestPageHandler(w http.ResponseWriter, r *http.Request) {
             color: #999;
             margin-top: 4px;
         }
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+        .tab-button {
+            background: none;
+            border: none;
+            border-bottom: 3px solid transparent;
+            color: #666;
+            padding: 10px 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-bottom: -2px;
+        }
+        .tab-button.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>🧪 Distractions-Free Test Query</h1>
-        <p class="subtitle">Test whether domains would be blocked at specific times</p>
+        <p class="subtitle">Test whether domains would be blocked at specific times with editable config</p>
         
-        <div class="form-group">
-            <label for="time">Time (Format: YYYY-MM-DD HH:MM)</label>
-            <input 
-                type="text" 
-                id="time" 
-                placeholder="Example: 2024-04-01 10:30"
-                value=""
-            >
-            <div class="time-format-hint">Use 24-hour format (e.g., 2024-04-01 10:30 for April 1, 2024 at 10:30 AM)</div>
+        <div class="tabs">
+            <button class="tab-button active" onclick="switchTab('test')">Test Query</button>
+            <button class="tab-button" onclick="switchTab('config')">Config</button>
         </div>
         
-        <div class="form-group">
-            <label for="domain">Domain</label>
-            <input 
-                type="text" 
-                id="domain" 
-                placeholder="Example: youtube.com"
-            >
-        </div>
-        
-        <div class="form-group">
-            <label for="config">Config (JSON)</label>
-            <textarea 
-                id="config" 
-                placeholder="Current config will be displayed here"
-                readonly
-            ></textarea>
-        </div>
-        
-        <button onclick="submitQuery()">Test Query</button>
-        
-        <div class="loading" id="loading">
-            <div class="spinner"></div>
-            <p>Running test query...</p>
-        </div>
-        
-        <div class="result-section hidden" id="resultSection">
-            <h2 style="margin-bottom: 20px; color: #333;">Query Result</h2>
-            
-            <div class="result-item">
-                <div class="result-label">Time</div>
-                <div class="result-value" id="resultTime">-</div>
+        <div id="testTab" class="tab-content active">
+            <div class="form-group">
+                <label for="time">Time (Format: YYYY-MM-DD HH:MM)</label>
+                <input 
+                    type="text" 
+                    id="time" 
+                    placeholder="Example: 2024-04-01 10:30"
+                    value=""
+                >
+                <div class="time-format-hint">Use 24-hour format (e.g., 2024-04-01 10:30 for April 1, 2024 at 10:30 AM)</div>
             </div>
             
-            <div class="result-item">
-                <div class="result-label">Weekday</div>
-                <div class="result-value" id="resultWeekday">-</div>
+            <div class="form-group">
+                <label for="domain">Domain</label>
+                <input 
+                    type="text" 
+                    id="domain" 
+                    placeholder="Example: youtube.com"
+                >
             </div>
             
-            <div class="result-item">
-                <div class="result-label">Domain</div>
-                <div class="result-value" id="resultDomain">-</div>
+            <div class="button-group">
+                <button onclick="submitQuery()">Test Query</button>
+                <button class="button-secondary" onclick="loadDefaultConfig()">Load Default Config</button>
             </div>
             
-            <div class="result-item">
-                <div class="result-label">Status</div>
-                <div class="result-value" id="resultStatus">-</div>
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p>Running test query...</p>
             </div>
             
-            <div class="result-item">
-                <div class="result-label">DNS Response</div>
-                <div class="result-value" id="resultDNS">-</div>
-            </div>
-            
-            <div class="result-item">
-                <div class="result-label">Applicable Rules</div>
-                <div class="result-value">
-                    <div class="rules-list" id="resultRules">No rules apply</div>
+            <div class="result-section hidden" id="resultSection">
+                <h2 style="margin-bottom: 20px; color: #333;">Query Result</h2>
+                
+                <div class="result-item">
+                    <div class="result-label">Time</div>
+                    <div class="result-value" id="resultTime">-</div>
                 </div>
+                
+                <div class="result-item">
+                    <div class="result-label">Weekday</div>
+                    <div class="result-value" id="resultWeekday">-</div>
+                </div>
+                
+                <div class="result-item">
+                    <div class="result-label">Domain</div>
+                    <div class="result-value" id="resultDomain">-</div>
+                </div>
+                
+                <div class="result-item">
+                    <div class="result-label">Status</div>
+                    <div class="result-value" id="resultStatus">-</div>
+                </div>
+                
+                <div class="result-item">
+                    <div class="result-label">DNS Response</div>
+                    <div class="result-value" id="resultDNS">-</div>
+                </div>
+                
+                <div class="result-item">
+                    <div class="result-label">Applicable Rules</div>
+                    <div class="result-value">
+                        <div class="rules-list" id="resultRules">No rules apply</div>
+                    </div>
+                </div>
+                
+                <div id="warningSection"></div>
+                <div id="errorSection"></div>
+            </div>
+        </div>
+        
+        <div id="configTab" class="tab-content">
+            <div class="form-group">
+                <label for="config">Configuration (JSON) - Editable</label>
+                <textarea 
+                    id="config" 
+                    placeholder="Your config will appear here"
+                ></textarea>
+                <div class="config-status" id="configStatus"></div>
             </div>
             
-            <div id="warningSection"></div>
-            <div id="errorSection"></div>
+            <div class="button-group">
+                <button onclick="validateConfig()">Validate Config</button>
+                <button class="button-secondary" onclick="loadDefaultConfig()">Load Default Config</button>
+            </div>
+            
+            <div id="configMessage"></div>
         </div>
     </div>
     
     <script>
-        // Load config on page load
+        const defaultConfig = {
+            "settings": {
+                "primary_dns": "8.8.8.8",
+                "backup_dns": "1.1.1.1"
+            },
+            "rules": [
+                {
+                    "domain": "youtube.com",
+                    "is_active": true,
+                    "schedules": {
+                        "Monday": [{"start": "09:00", "end": "11:00"}, {"start": "12:00", "end": "13:00"}, {"start": "14:00", "end": "17:00"}],
+                        "Tuesday": [{"start": "09:00", "end": "17:00"}],
+                        "Wednesday": [{"start": "09:00", "end": "17:00"}],
+                        "Thursday": [{"start": "09:00", "end": "17:00"}],
+                        "Friday": [{"start": "09:00", "end": "17:00"}]
+                    }
+                },
+                {
+                    "domain": "facebook.com",
+                    "is_active": true,
+                    "schedules": {
+                        "Monday": [{"start": "09:00", "end": "11:00"}, {"start": "13:00", "end": "15:00"}, {"start": "16:00", "end": "17:00"}],
+                        "Wednesday": [{"start": "09:00", "end": "12:00"}, {"start": "14:00", "end": "17:00"}],
+                        "Friday": [{"start": "09:00", "end": "12:00"}, {"start": "13:00", "end": "15:00"}]
+                    }
+                },
+                {
+                    "domain": "reddit.com",
+                    "is_active": true,
+                    "schedules": {
+                        "Monday": [{"start": "09:00", "end": "17:00"}],
+                        "Tuesday": [{"start": "09:00", "end": "17:00"}],
+                        "Thursday": [{"start": "09:00", "end": "17:00"}]
+                    }
+                },
+                {
+                    "domain": "instagram.com",
+                    "is_active": false,
+                    "schedules": {
+                        "Saturday": [{"start": "10:00", "end": "20:00"}],
+                        "Sunday": [{"start": "10:00", "end": "20:00"}]
+                    }
+                },
+                {
+                    "domain": "twitter.com",
+                    "is_active": true,
+                    "schedules": {
+                        "Monday": [{"start": "09:00", "end": "11:00"}, {"start": "13:00", "end": "15:00"}, {"start": "16:00", "end": "17:00"}],
+                        "Tuesday": [{"start": "09:00", "end": "17:30"}],
+                        "Wednesday": [{"start": "09:00", "end": "17:30"}],
+                        "Thursday": [{"start": "09:00", "end": "17:30"}],
+                        "Friday": [{"start": "09:00", "end": "16:00"}]
+                    }
+                },
+                {
+                    "domain": "linkedin.com",
+                    "is_active": true,
+                    "schedules": {
+                        "Monday": [{"start": "08:30", "end": "09:00"}, {"start": "17:30", "end": "18:00"}],
+                        "Tuesday": [{"start": "12:00", "end": "13:00"}],
+                        "Friday": [{"start": "16:00", "end": "17:30"}]
+                    }
+                }
+            ]
+        };
+
+        const validWeekdays = [
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+            "Thursday",
+            "Friday",
+            "Saturday",
+            "Sunday"
+        ];
+
+        let currentConfig = defaultConfig;
+        let lastValidConfigText = JSON.stringify(defaultConfig, null, 2);
+
         window.onload = async function() {
+            setConfigTextarea(defaultConfig);
             await loadConfig();
             setDefaultTime();
         };
         
+        function switchTab(tab) {
+            // Hide all tabs
+            document.getElementById('testTab').classList.remove('active');
+            document.getElementById('configTab').classList.remove('active');
+            
+            // Remove active class from all buttons
+            document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+            
+            // Show selected tab
+            if (tab === 'test') {
+                document.getElementById('testTab').classList.add('active');
+                document.querySelectorAll('.tab-button')[0].classList.add('active');
+            } else {
+                document.getElementById('configTab').classList.add('active');
+                document.querySelectorAll('.tab-button')[1].classList.add('active');
+            }
+        }
+        
+        function isValidWeekday(day) {
+            return validWeekdays.includes(day);
+        }
+
+        function parseAndValidateConfig(configText) {
+            if (!configText) {
+                return { valid: false, error: 'Config is empty' };
+            }
+
+            let parsed;
+            try {
+                parsed = JSON.parse(configText);
+            } catch (error) {
+                return { valid: false, error: 'Invalid JSON: ' + error.message };
+            }
+
+            if (!parsed || typeof parsed !== 'object') {
+                return { valid: false, error: 'Config must be a JSON object' };
+            }
+
+            if (!parsed.rules || !Array.isArray(parsed.rules)) {
+                return { valid: false, error: 'Config must contain a rules array' };
+            }
+
+            for (const rule of parsed.rules) {
+                if (!rule.domain || typeof rule.domain !== 'string') {
+                    return { valid: false, error: 'Each rule must include a domain string' };
+                }
+                if (typeof rule.is_active !== 'boolean') {
+                    return { valid: false, error: 'Each rule must include is_active boolean' };
+                }
+                if (!rule.schedules || typeof rule.schedules !== 'object') {
+                    return { valid: false, error: 'Rule ' + rule.domain + ' must include schedules object' };
+                }
+                for (const day of Object.keys(rule.schedules)) {
+                    if (!isValidWeekday(day)) {
+                        return { valid: false, error: 'Invalid schedule day: ' + day };
+                    }
+                    const slots = rule.schedules[day];
+                    if (!Array.isArray(slots) || slots.length === 0) {
+                        return { valid: false, error: 'Schedules for ' + day + ' must be an array of time slots' };
+                    }
+                    for (const slot of slots) {
+                        if (!slot || typeof slot !== 'object' || typeof slot.start !== 'string' || typeof slot.end !== 'string') {
+                            return { valid: false, error: 'Each schedule slot for ' + rule.domain + ' on ' + day + ' must include start and end strings' };
+                        }
+                    }
+                }
+            }
+
+            return { valid: true, config: parsed };
+        }
+
         async function loadConfig() {
+            setConfigTextarea(defaultConfig);
             try {
                 const response = await fetch('/api/config');
                 const config = await response.json();
-                document.getElementById('config').value = JSON.stringify(config, null, 2);
+                const parsedText = JSON.stringify(config, null, 2);
+                const validation = parseAndValidateConfig(parsedText);
+                if (validation.valid) {
+                    setConfigTextarea(validation.config);
+                    showConfigMessage('✅ Loaded config from server', 'success');
+                } else {
+                    showConfigMessage('⚠️ Server config invalid, using default config: ' + validation.error, 'error');
+                }
             } catch (error) {
                 console.error('Error loading config:', error);
+                loadDefaultConfig();
+            }
+        }
+
+        function loadDefaultConfig() {
+            setConfigTextarea(defaultConfig);
+            showConfigMessage('✅ Default config loaded', 'success');
+        }
+
+        function setConfigTextarea(configObject) {
+            currentConfig = configObject;
+            lastValidConfigText = JSON.stringify(configObject, null, 2);
+            document.getElementById('config').value = lastValidConfigText;
+            validateConfigSilent();
+        }
+
+        function validateConfig() {
+            const configText = document.getElementById('config').value.trim();
+            const statusEl = document.getElementById('configStatus');
+            const messageEl = document.getElementById('configMessage');
+            const validation = parseAndValidateConfig(configText);
+
+            if (!validation.valid) {
+                statusEl.textContent = '❌ ' + validation.error;
+                statusEl.className = 'config-status invalid';
+                messageEl.innerHTML = '<div class="error-banner">' + validation.error + '</div>';
+                return false;
+            }
+
+            currentConfig = validation.config;
+            lastValidConfigText = JSON.stringify(validation.config, null, 2);
+            statusEl.textContent = '✅ Config is valid';
+            statusEl.className = 'config-status valid';
+            messageEl.innerHTML = '<div class="success-banner">✅ Edited config accepted and will be used for test queries.</div>';
+            return true;
+        }
+
+        function validateConfigSilent() {
+            const configText = document.getElementById('config').value.trim();
+            const statusEl = document.getElementById('configStatus');
+            const validation = parseAndValidateConfig(configText);
+
+            if (!validation.valid) {
+                statusEl.textContent = '❌ ' + validation.error;
+                statusEl.className = 'config-status invalid';
+                return false;
+            }
+
+            currentConfig = validation.config;
+            lastValidConfigText = JSON.stringify(validation.config, null, 2);
+            statusEl.textContent = '✅ Valid config';
+            statusEl.className = 'config-status valid';
+            return true;
+        }
+
+        function showConfigMessage(message, type) {
+            const messageEl = document.getElementById('configMessage');
+            if (type === 'success') {
+                messageEl.innerHTML = '<div class="success-banner">' + message + '</div>';
+            } else {
+                messageEl.innerHTML = '<div class="error-banner">' + message + '</div>';
             }
         }
         
@@ -358,19 +732,35 @@ func TestPageHandler(w http.ResponseWriter, r *http.Request) {
         async function submitQuery() {
             const time = document.getElementById('time').value.trim();
             const domain = document.getElementById('domain').value.trim();
+            const configText = document.getElementById('config').value.trim();
             
             if (!time || !domain) {
                 alert('Please enter both time and domain');
                 return;
             }
             
+            const isValid = validateConfigSilent();
+            if (isValid) {
+                showConfigMessage('✅ Edited config accepted and will be used for this query.', 'success');
+            } else {
+                showConfigMessage('⚠️ Invalid config detected. Using last valid configuration for this query.', 'error');
+            }
+            
             document.getElementById('loading').style.display = 'block';
             document.getElementById('resultSection').classList.add('hidden');
             
             try {
+                const formData = new FormData();
+                formData.append('config', JSON.stringify(currentConfig, null, 2));
+                formData.append('time', time);
+                formData.append('domain', domain);
+                
                 const url = '/api/test-query?time=' + encodeURIComponent(time) + 
                            '&domain=' + encodeURIComponent(domain);
-                const response = await fetch(url);
+                const response = await fetch(url, {
+                    method: 'POST',
+                    body: formData
+                });
                 const result = await response.json();
                 
                 displayResult(result);
@@ -433,7 +823,15 @@ func TestPageHandler(w http.ResponseWriter, r *http.Request) {
             }
             
             document.getElementById('resultSection').classList.remove('hidden');
+            
+            // Switch to test tab
+            switchTab('test');
         }
+        
+        // Validate config while typing
+        document.addEventListener('DOMContentLoaded', function() {
+            document.getElementById('config').addEventListener('input', validateConfigSilent);
+        });
         
         // Allow Enter key to submit
         document.addEventListener('keypress', function(e) {
