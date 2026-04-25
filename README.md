@@ -28,7 +28,6 @@ Unlike browser extensions that can be easily disabled, **Distractions-Free** run
 **Don't want to compile?** Download pre-built binaries from the latest [GitHub Release](https://github.com/vsangava/distractions-free/releases):
 
 - 🍎 **macOS Apple Silicon** (M1/M2/M3): `distractions-free-macos-arm64`
-- 🍎 **macOS Intel** (x86_64): `distractions-free-macos-amd64`
 - 🪟 **Windows** (x86_64): `distractions-free-windows-amd64.exe`
 
 Then skip to **Step 2** in the installation guide below.
@@ -404,7 +403,7 @@ This project uses **GitHub Actions** to automatically build and release binaries
 
 2. **Automatic Build Process**:
    - GitHub Actions workflow triggers automatically
-   - Builds binaries for macOS (ARM64 + x86_64) and Windows (x86_64)
+   - Builds binaries for macOS ARM64 and Windows (x86_64)
    - Runs full test suite on each platform
    - Uploads binaries to the release
 
@@ -419,7 +418,6 @@ The `.github/workflows/release.yml` file:
 - **Triggers on**: Git tags matching `v*` (e.g., `v1.0.0`)
 - **Builds for**:
   - macOS ARM64 (Apple Silicon: M1/M2/M3)
-  - macOS x86_64 (Intel Macs)
   - Windows x86_64
 - **Tests**: Runs `go test ./...` on each platform before release
 - **Uploads**: Uses GitHub's release artifacts API
