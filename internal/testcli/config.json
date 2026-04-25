@@ -1,7 +1,8 @@
 {
   "settings": {
     "primary_dns": "8.8.8.8:53",
-    "backup_dns": "1.1.1.1:53"
+    "backup_dns": "1.1.1.1:53",
+    "auth_token": "19b5931dd350a82f1ad86f2592e2dbe7"
   },
   "rules": [
     {
