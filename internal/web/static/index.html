@@ -404,6 +404,19 @@
                     border:1px solid #313244;
                 "></pre>
             </div>
+
+            <div id="pfPreview" style="display:none; margin-top:20px;">
+                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+                    <span style="font-weight:600; font-size:14px; color:#333;">🔥 pf anchor preview <span style="font-weight:400; color:#888;">(simulated — no files touched)</span></span>
+                    <span id="pfPreviewMeta" style="font-size:12px; color:#888;"></span>
+                </div>
+                <pre id="pfPreviewContent" style="
+                    background:#1e1e2e; color:#cdd6f4; border-radius:8px;
+                    padding:16px; font-size:13px; line-height:1.6;
+                    overflow-x:auto; white-space:pre-wrap; margin:0;
+                    border:1px solid #313244;
+                "></pre>
+            </div>
         </div>
 
         <div id="statusTab" class="tab-content">
@@ -423,7 +436,8 @@
         const defaultConfig = {
             "settings": {
                 "primary_dns": "8.8.8.8:53",
-                "backup_dns": "1.1.1.1:53"
+                "backup_dns": "1.1.1.1:53",
+                "enforcement_mode": "hosts"
             },
             "rules": [
                 {
@@ -685,6 +699,7 @@
             messageEl.innerHTML = '<div class="success-banner">✅ Edited config accepted and will be used for test queries.</div>';
 
             await refreshHostsPreview();
+            await refreshPFPreview();
             return true;
         }
 
@@ -708,9 +723,7 @@
                 const evalAt = data.evaluated_at ? new Date(data.evaluated_at).toLocaleTimeString() : '';
 
                 if (mode !== 'hosts') {
-                    previewEl.style.display = 'block';
-                    contentEl.textContent = '# Hosts preview is only applicable in "hosts" enforcement mode.\n# Current mode: ' + mode;
-                    metaEl.textContent = '';
+                    previewEl.style.display = 'none';
                     return;
                 }
 
@@ -729,6 +742,49 @@
                     ];
                     contentEl.textContent = lines.join('\n');
                 }
+            } catch (e) {
+                previewEl.style.display = 'none';
+            }
+        }
+
+        async function refreshPFPreview() {
+            const previewEl = document.getElementById('pfPreview');
+            const contentEl = document.getElementById('pfPreviewContent');
+            const metaEl = document.getElementById('pfPreviewMeta');
+
+            const mode = (currentConfig && currentConfig.settings && currentConfig.settings.enforcement_mode) || 'hosts';
+            if (mode !== 'strict') {
+                previewEl.style.display = 'none';
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/pf-preview', {
+                    method: 'POST',
+                    headers: { 'X-Auth-Token': authToken, 'Content-Type': 'application/json' },
+                    body: JSON.stringify(currentConfig)
+                });
+                if (!res.ok) { previewEl.style.display = 'none'; return; }
+                const data = await res.json();
+                if (data.error) { previewEl.style.display = 'none'; return; }
+
+                const domains = data.domains || [];
+                const resolvedIPs = data.resolved_ips || {};
+                const anchorContent = data.anchor_content || '';
+
+                previewEl.style.display = 'block';
+                metaEl.textContent = domains.length + ' domain(s)';
+
+                if (domains.length === 0) {
+                    contentEl.textContent = '# No domains are currently in a block window.\n# pf anchor will have no entries right now.';
+                    return;
+                }
+
+                const ipLines = domains.map(d => {
+                    const ips = (resolvedIPs[d] || []).join(', ') || 'no IPs resolved';
+                    return '# ' + d + ' → ' + ips;
+                });
+                contentEl.textContent = ipLines.join('\n') + '\n\n' + anchorContent;
             } catch (e) {
                 previewEl.style.display = 'none';
             }
