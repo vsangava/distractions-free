@@ -17,6 +17,8 @@ import (
 	"github.com/vsangava/distractions-free/internal/testcli"
 )
 
+const maxPauseMinutes = 240 // 4 hours
+
 //go:embed static/*
 var webFiles embed.FS
 
@@ -151,11 +153,64 @@ func StatusHandler(w http.ResponseWriter, r *http.Request) {
 		blocked = scheduler.EvaluateRulesAtTime(time.Now(), cfg)
 		lastEval = time.Now()
 	}
-	json.NewEncoder(w).Encode(map[string]any{
+	cfg := config.GetConfig()
+	resp := map[string]any{
 		"blocked_domains":  blocked,
 		"last_evaluated":   lastEval,
-		"enforcement_mode": config.GetConfig().Settings.GetEnforcementMode(),
+		"enforcement_mode": cfg.Settings.GetEnforcementMode(),
+		"paused":           cfg.IsPaused(time.Now()),
+	}
+	if cfg.Pause != nil {
+		resp["paused_until"] = cfg.Pause.Until.Format(time.RFC3339)
+	}
+	json.NewEncoder(w).Encode(resp)
+}
+
+// PauseHandler handles POST /api/pause.
+// Body: {"minutes": N} where N must be between 1 and maxPauseMinutes.
+func PauseHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	var body struct {
+		Minutes int `json:"minutes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON: " + err.Error()})
+		return
+	}
+	if body.Minutes <= 0 || body.Minutes > maxPauseMinutes {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "minutes must be between 1 and 240"})
+		return
+	}
+
+	until := time.Now().Add(time.Duration(body.Minutes) * time.Minute)
+	config.SetPause(until)
+	if err := config.SaveConfig(); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "failed to save config: " + err.Error()})
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":      "ok",
+		"paused_until": until.Format(time.RFC3339),
 	})
+}
+
+// ResumeHandler handles DELETE /api/pause, clearing any active pause immediately.
+func ResumeHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	config.ClearPause()
+	if err := config.SaveConfig(); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "failed to save config: " + err.Error()})
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 // resolveConfig extracts a config from the request body if present, otherwise reloads
@@ -329,6 +384,16 @@ func StartWebServer() {
 	mux.HandleFunc("/api/config/update", authMiddleware(UpdateConfigHandler))
 	mux.HandleFunc("/api/hosts-preview", authMiddleware(HostsPreviewHandler))
 	mux.HandleFunc("/api/pf-preview", authMiddleware(PFPreviewHandler))
+	mux.HandleFunc("/api/pause", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			PauseHandler(w, r)
+		case http.MethodDelete:
+			ResumeHandler(w, r)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
 
 	log.Println("Web server starting on http://localhost:8040")
 	if err := http.ListenAndServe("127.0.0.1:8040", mux); err != nil {
@@ -355,6 +420,16 @@ func StartTestWebServer() {
 	mux.HandleFunc("/api/config/update", authMiddleware(UpdateConfigHandler))
 	mux.HandleFunc("/api/hosts-preview", authMiddleware(HostsPreviewHandler))
 	mux.HandleFunc("/api/pf-preview", authMiddleware(PFPreviewHandler))
+	mux.HandleFunc("/api/pause", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			PauseHandler(w, r)
+		case http.MethodDelete:
+			ResumeHandler(w, r)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
 
 	log.Println("Test web server starting on http://localhost:8040")
 	if err := http.ListenAndServe("127.0.0.1:8040", mux); err != nil {

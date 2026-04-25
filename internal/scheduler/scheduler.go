@@ -170,8 +170,13 @@ func GetStatus() (blocked map[string]bool, lastEval time.Time) {
 }
 
 // EvaluateRulesAtTime evaluates blocking rules at a specific time and returns blocked domains.
+// Returns an empty map immediately if the config has an active pause window.
 // This is the testable function that doesn't depend on time.Now().
 func EvaluateRulesAtTime(t time.Time, cfg config.Config) map[string]bool {
+	if cfg.IsPaused(t) {
+		return make(map[string]bool)
+	}
+
 	currentDay := t.Weekday().String()
 	now := time.Date(0, 1, 1, t.Hour(), t.Minute(), 0, 0, time.UTC)
 
@@ -200,9 +205,13 @@ func EvaluateRulesAtTime(t time.Time, cfg config.Config) map[string]bool {
 }
 
 // CheckWarningDomainsAtTime checks if any domains should trigger warnings within 3 minutes of block start.
-// Warnings are triggered for any time within 3 minutes before a scheduled block.
+// Returns nil immediately if the config has an active pause window.
 // This is the testable function that doesn't depend on time.Now().
 func CheckWarningDomainsAtTime(t time.Time, cfg config.Config) []string {
+	if cfg.IsPaused(t) {
+		return nil
+	}
+
 	currentDay := t.Weekday().String()
 
 	var warningDomains []string
@@ -258,6 +267,15 @@ func evaluateRules() {
 	}
 	cfg := config.GetConfig()
 	now := time.Now()
+
+	// Remove an expired pause so config.json stays clean.
+	if cfg.Pause != nil && !now.Before(cfg.Pause.Until) {
+		config.ClearPause()
+		if err := config.SaveConfig(); err != nil {
+			log.Printf("scheduler: clear expired pause: %v", err)
+		}
+		cfg = config.GetConfig()
+	}
 
 	newBlocked := EvaluateRulesAtTime(now, cfg)
 	warningDomains := CheckWarningDomainsAtTime(now, cfg)

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"time"
 )
 
 type TimeSlot struct {
@@ -40,9 +41,20 @@ func (s Settings) GetEnforcementMode() string {
 	}
 }
 
+// PauseWindow represents a temporary suspension of all blocking rules.
+type PauseWindow struct {
+	Until time.Time `json:"until"`
+}
+
 type Config struct {
-	Settings Settings `json:"settings"`
-	Rules    []Rule   `json:"rules"`
+	Settings Settings     `json:"settings"`
+	Rules    []Rule       `json:"rules"`
+	Pause    *PauseWindow `json:"pause,omitempty"`
+}
+
+// IsPaused reports whether all blocking rules are suspended at time t.
+func (c Config) IsPaused(t time.Time) bool {
+	return c.Pause != nil && t.Before(c.Pause.Until)
 }
 
 var (
@@ -114,6 +126,22 @@ func SetEnforcementMode(mode string) {
 	mu.Lock()
 	defer mu.Unlock()
 	AppConfig.Settings.EnforcementMode = mode
+}
+
+// SetPause sets a pause window that suppresses all blocking until until.
+// Call SaveConfig to persist the change to disk.
+func SetPause(until time.Time) {
+	mu.Lock()
+	defer mu.Unlock()
+	AppConfig.Pause = &PauseWindow{Until: until}
+}
+
+// ClearPause removes any active pause window.
+// Call SaveConfig to persist the change to disk.
+func ClearPause() {
+	mu.Lock()
+	defer mu.Unlock()
+	AppConfig.Pause = nil
 }
 
 // SaveConfig writes the current in-memory config to disk.
