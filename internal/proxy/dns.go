@@ -12,6 +12,7 @@ import (
 var (
 	blockedDomains map[string]bool
 	blockMu        sync.RWMutex
+	dnsServer      *dns.Server
 )
 
 func UpdateBlockedDomains(newBlocked map[string]bool) {
@@ -85,9 +86,17 @@ func StartDNSServer() {
 	UpdateBlockedDomains(make(map[string]bool))
 	dns.HandleFunc(".", handleDNSRequest)
 
-	server := &dns.Server{Addr: "127.0.0.1:53", Net: "udp"}
+	dnsServer = &dns.Server{Addr: "127.0.0.1:53", Net: "udp"}
 	log.Printf("Starting local DNS proxy on 127.0.0.1:53...")
-	if err := server.ListenAndServe(); err != nil {
+	if err := dnsServer.ListenAndServe(); err != nil {
 		log.Fatalf("Failed to start DNS server: %s", err.Error())
+	}
+}
+
+func StopDNSServer() {
+	if dnsServer != nil {
+		if err := dnsServer.Shutdown(); err != nil {
+			log.Printf("DNS server shutdown error: %v", err)
+		}
 	}
 }
