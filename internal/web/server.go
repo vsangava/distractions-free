@@ -12,6 +12,7 @@ import (
 
 	"github.com/vsangava/distractions-free/internal/config"
 	"github.com/vsangava/distractions-free/internal/enforcer"
+	"github.com/vsangava/distractions-free/internal/pf"
 	"github.com/vsangava/distractions-free/internal/scheduler"
 	"github.com/vsangava/distractions-free/internal/testcli"
 )
@@ -288,6 +289,32 @@ func HostsPreviewHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// PFPreviewHandler evaluates blocked domains under the posted (or disk) config and returns
+// resolved IPs + anchor content that strict mode would load into pf — without touching pf.
+func PFPreviewHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	cfg := resolveConfig(r)
+
+	if cfg.Settings.GetEnforcementMode() != "strict" {
+		json.NewEncoder(w).Encode(map[string]string{"error": "pf-preview is only relevant for strict mode"})
+		return
+	}
+
+	blocked := scheduler.EvaluateRulesAtTime(time.Now(), cfg)
+	var domains []string
+	for d := range blocked {
+		domains = append(domains, d)
+	}
+
+	dnsServer := cfg.Settings.PrimaryDNS
+	if dnsServer == "" {
+		dnsServer = "8.8.8.8:53"
+	}
+
+	preview := pf.GeneratePreview(domains, dnsServer)
+	json.NewEncoder(w).Encode(preview)
+}
+
 func StartWebServer() {
 	staticHandler, err := StaticFileHandler()
 	if err != nil {
@@ -301,6 +328,7 @@ func StartWebServer() {
 	mux.HandleFunc("/api/test-query", authMiddleware(TestQueryHandler))
 	mux.HandleFunc("/api/config/update", authMiddleware(UpdateConfigHandler))
 	mux.HandleFunc("/api/hosts-preview", authMiddleware(HostsPreviewHandler))
+	mux.HandleFunc("/api/pf-preview", authMiddleware(PFPreviewHandler))
 
 	log.Println("Web server starting on http://localhost:8040")
 	if err := http.ListenAndServe("127.0.0.1:8040", mux); err != nil {
@@ -326,6 +354,7 @@ func StartTestWebServer() {
 	mux.HandleFunc("/api/test-query", authMiddleware(TestQueryHandler))
 	mux.HandleFunc("/api/config/update", authMiddleware(UpdateConfigHandler))
 	mux.HandleFunc("/api/hosts-preview", authMiddleware(HostsPreviewHandler))
+	mux.HandleFunc("/api/pf-preview", authMiddleware(PFPreviewHandler))
 
 	log.Println("Test web server starting on http://localhost:8040")
 	if err := http.ListenAndServe("127.0.0.1:8040", mux); err != nil {
