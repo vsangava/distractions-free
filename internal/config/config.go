@@ -166,3 +166,18 @@ func GetConfig() Config {
 	defer mu.RUnlock()
 	return AppConfig
 }
+
+// ConfigDir returns the OS-specific config directory path without creating it.
+func ConfigDir() string {
+	if UseLocalConfig {
+		return "."
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		return "/Library/Application Support/DistractionsFree"
+	case "windows":
+		return filepath.Join(os.Getenv("PROGRAMDATA"), "DistractionsFree")
+	default:
+		return "/etc/distractionsfree"
+	}
+}

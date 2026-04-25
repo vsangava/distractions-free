@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/kardianos/service"
+	"github.com/vsangava/distractions-free/internal/cleanup"
 	"github.com/vsangava/distractions-free/internal/config"
 	"github.com/vsangava/distractions-free/internal/enforcer"
 	"github.com/vsangava/distractions-free/internal/proxy"
@@ -105,7 +106,99 @@ func (p *program) Stop(s service.Service) error {
 	return nil
 }
 
+var svcConfig = &service.Config{
+	Name:        "DistractionsFree",
+	DisplayName: "Distractions Free DNS Proxy",
+	Description: "Local DNS proxy for blocking distractions.",
+}
+
+func runClean(yes bool) {
+	if !cleanup.IsPrivileged() {
+		log.Fatal("--clean requires root/admin privileges. Run with: sudo ./distractions-free --clean")
+	}
+
+	fmt.Println("Cleaning all distractions-free system changes...")
+	fmt.Println()
+
+	var steps []cleanup.Step
+	criticalFailed := false
+
+	addStep := func(s cleanup.Step) {
+		steps = append(steps, s)
+		if s.Status == cleanup.StatusError && s.Critical {
+			criticalFailed = true
+		}
+	}
+	addSteps := func(ss []cleanup.Step) {
+		for _, s := range ss {
+			addStep(s)
+		}
+	}
+
+	// Step 1 — Stop the running service.
+	prg := &program{}
+	s, err := service.New(prg, svcConfig)
+	if err != nil {
+		addStep(cleanup.Step{Label: "Service stopped", Status: cleanup.StatusWarn, Detail: "could not create service handle: " + err.Error()})
+	} else if err := service.Control(s, "stop"); err != nil {
+		// Not running is not a failure.
+		addStep(cleanup.Step{Label: "Service stopped", Status: cleanup.StatusWarn, Detail: err.Error()})
+	} else {
+		addStep(cleanup.Step{Label: "Service stopped", Status: cleanup.StatusDone})
+	}
+
+	// Step 2 — Reset DNS on all network interfaces that point at 127.0.0.1.
+	addSteps(cleanup.ResetAllDNSInterfaces())
+
+	// Step 3 — Remove distractions-free managed block from /etc/hosts.
+	addStep(cleanup.CleanHostsFile())
+
+	// Step 4 — Remove pf anchor from /etc/pf.conf (macOS strict mode).
+	addStep(cleanup.CleanPFAnchor())
+
+	// Step 5 — Flush DNS cache.
+	addStep(cleanup.FlushDNSCache())
+
+	// Step 6 — Uninstall the system service.
+	if s != nil {
+		if err := service.Control(s, "uninstall"); err != nil {
+			addStep(cleanup.Step{Label: "Service uninstalled", Status: cleanup.StatusWarn, Detail: err.Error(), Critical: true})
+		} else {
+			addStep(cleanup.Step{Label: "Service uninstalled", Status: cleanup.StatusDone, Critical: true})
+		}
+	}
+
+	// Step 7 — Remove config directory.
+	addStep(cleanup.RemoveConfigDir(yes))
+
+	// Step 8 — Remove temp files.
+	addStep(cleanup.RemoveTempFiles())
+
+	// Step 9 — Verify port 53 is free.
+	addStep(cleanup.CheckPort53())
+
+	// Print summary.
+	fmt.Println()
+	for _, step := range steps {
+		fmt.Println(step.String())
+	}
+	fmt.Println()
+	if criticalFailed {
+		fmt.Println("Some critical steps failed. Review the output above.")
+		os.Exit(1)
+	}
+	fmt.Println("System is clean. distractions-free has been fully removed.")
+}
+
 func main() {
+	// --clean safely removes all system-level changes made by distractions-free.
+	// Usage: sudo ./distractions-free --clean [--yes]
+	if len(os.Args) > 1 && os.Args[1] == "--clean" {
+		yes := len(os.Args) > 2 && os.Args[2] == "--yes"
+		runClean(yes)
+		return
+	}
+
 	// Test web UI mode: interactive web interface for testing blocking status
 	if len(os.Args) > 1 && os.Args[1] == "--test-web" {
 		// Use local config for test mode (no need for system paths)
@@ -162,12 +255,6 @@ func main() {
 		}
 		log.Println("Enforcement mode set to 'strict'. Restart the service to apply.")
 		return
-	}
-
-	svcConfig := &service.Config{
-		Name:        "DistractionsFree",
-		DisplayName: "Distractions Free DNS Proxy",
-		Description: "Local DNS proxy for blocking distractions.",
 	}
 
 	prg := &program{}
