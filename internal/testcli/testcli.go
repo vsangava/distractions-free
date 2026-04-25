@@ -82,7 +82,7 @@ func GetQueryResultWithConfig(timeStr, domain string, cfg config.Config) QueryRe
 
 	// Evaluate blocking rules at this time
 	blockedDomains := scheduler.EvaluateRulesAtTime(testTime, cfg)
-	result.IsBlocked = blockedDomains[domain]
+	result.IsBlocked = proxy.IsDomainBlocked(domain, blockedDomains)
 
 	// Create a DNS query
 	dnsQuery := new(dns.Msg)
@@ -112,9 +112,13 @@ func GetQueryResultWithConfig(timeStr, domain string, cfg config.Config) QueryRe
 		}
 	}
 
-	// Find applicable rules
+	// Find applicable rules — includes parent-domain rules (e.g. youtube.com rule applies to m.youtube.com)
+	now := time.Date(0, 1, 1, testTime.Hour(), testTime.Minute(), 0, 0, time.UTC)
 	for _, rule := range cfg.Rules {
-		if !rule.IsActive || rule.Domain != domain {
+		if !rule.IsActive {
+			continue
+		}
+		if !proxy.IsDomainBlocked(domain, map[string]bool{rule.Domain: true}) {
 			continue
 		}
 
@@ -122,8 +126,12 @@ func GetQueryResultWithConfig(timeStr, domain string, cfg config.Config) QueryRe
 
 		if slots, exists := rule.Schedules[testTime.Weekday().String()]; exists {
 			for _, slot := range slots {
-				currentTime := testTime.Format("15:04")
-				isActive := currentTime >= slot.Start && currentTime < slot.End
+				slotStart, errS := time.Parse("15:04", slot.Start)
+				slotEnd, errE := time.Parse("15:04", slot.End)
+				var isActive bool
+				if errS == nil && errE == nil {
+					isActive = (now.Equal(slotStart) || now.After(slotStart)) && now.Before(slotEnd)
+				}
 				ruleInfo.Schedules = append(ruleInfo.Schedules, ScheduleInfo{
 					Weekday:  testTime.Weekday().String(),
 					Start:    slot.Start,
@@ -138,14 +146,26 @@ func GetQueryResultWithConfig(timeStr, domain string, cfg config.Config) QueryRe
 		}
 	}
 
-	// Check for warnings
+	// Check for warnings — a subdomain triggers a warning if its parent domain has one
 	warnings := scheduler.CheckWarningDomainsAtTime(testTime, cfg)
-	if contains(warnings, domain) {
-		result.HasWarning = true
-		result.WarningMessage = "⚠️ Warning will trigger 3 minutes before block!"
+	for _, w := range warnings {
+		if proxy.IsDomainBlocked(domain, map[string]bool{w: true}) {
+			result.HasWarning = true
+			result.WarningMessage = "⚠️ Warning will trigger 3 minutes before block!"
+			break
+		}
 	}
 
 	return result
+}
+
+func contains(slice []string, item string) bool {
+	for _, v := range slice {
+		if v == item {
+			return true
+		}
+	}
+	return false
 }
 
 // QueryBlocking tests whether a domain would be blocked at a specific time,
@@ -184,7 +204,7 @@ func QueryBlocking(timeStr, domain string) error {
 	}
 
 	// Format and print results
-	isBlocked := blockedDomains[domain]
+	isBlocked := proxy.IsDomainBlocked(domain, blockedDomains)
 
 	separator := strings.Repeat("=", 60)
 	dashLine := strings.Repeat("-", 60)
@@ -216,13 +236,13 @@ func QueryBlocking(timeStr, domain string) error {
 	fmt.Println(dashLine)
 	fmt.Println("Applicable Rules:")
 
+	now := time.Date(0, 1, 1, testTime.Hour(), testTime.Minute(), 0, 0, time.UTC)
 	foundRules := false
 	for _, rule := range cfg.Rules {
 		if !rule.IsActive {
 			continue
 		}
-
-		if rule.Domain != domain {
+		if !proxy.IsDomainBlocked(domain, map[string]bool{rule.Domain: true}) {
 			continue
 		}
 
@@ -231,8 +251,11 @@ func QueryBlocking(timeStr, domain string) error {
 
 		if slots, exists := rule.Schedules[testTime.Weekday().String()]; exists {
 			for _, slot := range slots {
-				currentTime := testTime.Format("15:04")
-				if currentTime >= slot.Start && currentTime < slot.End {
+				slotStart, errS := time.Parse("15:04", slot.Start)
+				slotEnd, errE := time.Parse("15:04", slot.End)
+				active := errS == nil && errE == nil &&
+					(now.Equal(slotStart) || now.After(slotStart)) && now.Before(slotEnd)
+				if active {
 					fmt.Printf("    ✓ Blocked on %s from %s to %s (ACTIVE)\n", testTime.Weekday(), slot.Start, slot.End)
 				} else {
 					fmt.Printf("    ○ Blocked on %s from %s to %s (not active now)\n", testTime.Weekday(), slot.Start, slot.End)
@@ -250,8 +273,11 @@ func QueryBlocking(timeStr, domain string) error {
 	// Show warning info
 	fmt.Println(dashLine)
 	warnings := scheduler.CheckWarningDomainsAtTime(testTime, cfg)
-	if contains(warnings, domain) {
-		fmt.Printf("⚠️  Warning will trigger 3 minutes before block!\n")
+	for _, w := range warnings {
+		if proxy.IsDomainBlocked(domain, map[string]bool{w: true}) {
+			fmt.Printf("⚠️  Warning will trigger 3 minutes before block!\n")
+			break
+		}
 	}
 
 	fmt.Println(separator)
@@ -259,12 +285,3 @@ func QueryBlocking(timeStr, domain string) error {
 	return nil
 }
 
-// contains checks if a slice contains a string
-func contains(slice []string, item string) bool {
-	for _, v := range slice {
-		if v == item {
-			return true
-		}
-	}
-	return false
-}

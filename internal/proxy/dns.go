@@ -21,7 +21,8 @@ func UpdateBlockedDomains(newBlocked map[string]bool) {
 	blockedDomains = newBlocked
 }
 
-func isDomainBlocked(domain string, blocked map[string]bool) bool {
+// IsDomainBlocked reports whether domain matches any entry in blocked, including subdomains.
+func IsDomainBlocked(domain string, blocked map[string]bool) bool {
 	if blocked[domain] {
 		return true
 	}
@@ -47,7 +48,7 @@ func GetDNSResponse(r *dns.Msg, blockedDomainsList map[string]bool, primaryDNS, 
 	q := r.Question[0]
 	domain := strings.TrimSuffix(q.Name, ".")
 
-	if isDomainBlocked(domain, blockedDomainsList) && q.Qtype == dns.TypeA {
+	if IsDomainBlocked(domain, blockedDomainsList) && q.Qtype == dns.TypeA {
 		rr, _ := dns.NewRR(q.Name + " 60 IN A 0.0.0.0")
 		m.Answer = append(m.Answer, rr)
 		return m, nil
