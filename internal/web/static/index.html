@@ -253,6 +253,45 @@
         .tab-content.active {
             display: block;
         }
+        .status-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+        }
+        .status-meta {
+            font-size: 12px;
+            color: #999;
+        }
+        .blocked-list {
+            list-style: none;
+        }
+        .blocked-list li {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 14px;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            background: #fff0f0;
+            border: 1px solid #f5c6cb;
+            font-family: monospace;
+            font-size: 14px;
+            color: #721c24;
+        }
+        .blocked-list li::before {
+            content: "🚫";
+        }
+        .status-empty {
+            color: #28a745;
+            font-weight: 600;
+            padding: 16px 0;
+        }
+        .button-refresh {
+            background: linear-gradient(135deg, #28a745 0%, #1e7e34 100%);
+            font-size: 13px;
+            padding: 8px 18px;
+        }
     </style>
 </head>
 <body>
@@ -263,6 +302,7 @@
         <div class="tabs">
             <button class="tab-button active" onclick="switchTab('test')">Test Query</button>
             <button class="tab-button" onclick="switchTab('config')">Config</button>
+            <button class="tab-button" onclick="switchTab('status')">Status</button>
         </div>
         
         <div id="testTab" class="tab-content active">
@@ -339,19 +379,30 @@
         <div id="configTab" class="tab-content">
             <div class="form-group">
                 <label for="config">Configuration (JSON) - Editable</label>
-                <textarea 
-                    id="config" 
+                <textarea
+                    id="config"
                     placeholder="Your config will appear here"
                 ></textarea>
                 <div class="config-status" id="configStatus"></div>
             </div>
-            
+
             <div class="button-group">
                 <button onclick="validateConfig()">Validate Config</button>
                 <button class="button-secondary" onclick="loadDefaultConfig()">Load Default Config</button>
             </div>
-            
+
             <div id="configMessage"></div>
+        </div>
+
+        <div id="statusTab" class="tab-content">
+            <div class="status-header">
+                <h2 style="color: #333;">Currently Blocked Domains</h2>
+                <button class="button-refresh" onclick="loadStatus()">↻ Refresh</button>
+            </div>
+            <div class="status-meta" id="statusMeta"></div>
+            <div id="statusContent" style="margin-top: 16px;">
+                <p style="color: #999;">Loading...</p>
+            </div>
         </div>
     </div>
     
@@ -443,20 +494,54 @@
         };
         
         function switchTab(tab) {
-            // Hide all tabs
             document.getElementById('testTab').classList.remove('active');
             document.getElementById('configTab').classList.remove('active');
-            
-            // Remove active class from all buttons
+            document.getElementById('statusTab').classList.remove('active');
             document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
-            
-            // Show selected tab
+
             if (tab === 'test') {
                 document.getElementById('testTab').classList.add('active');
                 document.querySelectorAll('.tab-button')[0].classList.add('active');
-            } else {
+            } else if (tab === 'config') {
                 document.getElementById('configTab').classList.add('active');
                 document.querySelectorAll('.tab-button')[1].classList.add('active');
+            } else {
+                document.getElementById('statusTab').classList.add('active');
+                document.querySelectorAll('.tab-button')[2].classList.add('active');
+                loadStatus();
+            }
+        }
+
+        async function loadStatus() {
+            const contentEl = document.getElementById('statusContent');
+            const metaEl = document.getElementById('statusMeta');
+            contentEl.innerHTML = '<p style="color: #999;">Loading...</p>';
+            metaEl.textContent = '';
+            try {
+                const response = await fetch('/api/status', {
+                    headers: { 'X-Auth-Token': authToken }
+                });
+                if (!response.ok) {
+                    contentEl.innerHTML = '<div class="error-banner">Failed to load status (is the service running?)</div>';
+                    return;
+                }
+                const data = await response.json();
+                const blocked = data.blocked_domains || {};
+                const domains = Object.keys(blocked).filter(k => blocked[k]);
+
+                if (data.last_evaluated) {
+                    const d = new Date(data.last_evaluated);
+                    metaEl.textContent = 'Last evaluated: ' + (isNaN(d) ? data.last_evaluated : d.toLocaleString());
+                }
+
+                if (domains.length === 0) {
+                    contentEl.innerHTML = '<p class="status-empty">✅ No domains are currently blocked.</p>';
+                } else {
+                    const items = domains.map(d => '<li>' + d + '</li>').join('');
+                    contentEl.innerHTML = '<ul class="blocked-list">' + items + '</ul>';
+                }
+            } catch (err) {
+                contentEl.innerHTML = '<div class="error-banner">Error fetching status: ' + err.message + '</div>';
             }
         }
         
