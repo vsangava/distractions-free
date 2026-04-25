@@ -4,13 +4,12 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
-	"runtime"
 	"strings"
 	"time"
 
 	"github.com/kardianos/service"
 	"github.com/vsangava/distractions-free/internal/config"
+	"github.com/vsangava/distractions-free/internal/enforcer"
 	"github.com/vsangava/distractions-free/internal/proxy"
 	"github.com/vsangava/distractions-free/internal/scheduler"
 	"github.com/vsangava/distractions-free/internal/testcli"
@@ -60,7 +59,9 @@ func testAppleScript() {
 	}
 }
 
-type program struct{}
+type program struct {
+	enforcer enforcer.Enforcer
+}
 
 func (p *program) Start(s service.Service) error {
 	go p.run()
@@ -71,20 +72,35 @@ func (p *program) run() {
 	if err := config.LoadConfig(); err != nil {
 		log.Printf("Config warning: %v", err)
 	}
+
+	cfg := config.GetConfig()
+	mode := cfg.Settings.GetEnforcementMode()
+	log.Printf("Enforcement mode: %s", mode)
+
+	e := enforcer.New(cfg)
+	if err := e.Setup(); err != nil {
+		log.Fatalf("Enforcer setup failed: %v", err)
+	}
+	p.enforcer = e
+
+	scheduler.SetEnforcer(e)
 	scheduler.Start()
 	go web.StartWebServer()
-	proxy.StartDNSServer()
+
+	if mode == "dns" || mode == "strict" {
+		// DNS server blocks until stopped; keep this as the last call.
+		proxy.StartDNSServer()
+	} else {
+		// Hosts mode: no port binding needed; park the goroutine.
+		select {}
+	}
 }
 
 func (p *program) Stop(s service.Service) error {
-	log.Println("Stopping service... restoring default OS DNS.")
+	log.Println("Stopping service...")
 	proxy.StopDNSServer()
-	if runtime.GOOS == "darwin" {
-		exec.Command("networksetup", "-setdnsservers", "Wi-Fi", "Empty").Run()
-		exec.Command("dscacheutil", "-flushcache").Run()
-		exec.Command("killall", "-HUP", "mDNSResponder").Run()
-	} else if runtime.GOOS == "windows" {
-		exec.Command("powershell", "-Command", "Set-DnsClientServerAddress -InterfaceAlias 'Wi-Fi' -ResetServerAddresses").Run()
+	if p.enforcer != nil {
+		p.enforcer.Teardown()
 	}
 	return nil
 }
@@ -130,6 +146,21 @@ func main() {
 		config.UseLocalConfig = true
 		prg := &program{}
 		prg.run()
+		return
+	}
+
+	// --strict sets enforcement_mode to "strict" in config and exits.
+	// Usage: sudo ./distractions-free --strict
+	//        sudo ./distractions-free install && sudo ./distractions-free start
+	if len(os.Args) > 1 && os.Args[1] == "--strict" {
+		if err := config.LoadConfig(); err != nil {
+			log.Printf("Config warning (will use defaults): %v", err)
+		}
+		config.SetEnforcementMode("strict")
+		if err := config.SaveConfig(); err != nil {
+			log.Fatalf("Failed to save config: %v", err)
+		}
+		log.Println("Enforcement mode set to 'strict'. Restart the service to apply.")
 		return
 	}
 

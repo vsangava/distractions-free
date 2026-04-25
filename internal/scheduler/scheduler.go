@@ -12,12 +12,20 @@ import (
 	"time"
 
 	"github.com/vsangava/distractions-free/internal/config"
-	"github.com/vsangava/distractions-free/internal/proxy"
+	"github.com/vsangava/distractions-free/internal/enforcer"
 )
 
 var activeBlocks = make(map[string]bool)
 var activeBlocksMu sync.RWMutex
 var lastEvalTime time.Time
+
+var activeEnforcer enforcer.Enforcer
+
+// SetEnforcer wires the enforcement backend used by the scheduler.
+// Must be called before Start().
+func SetEnforcer(e enforcer.Enforcer) {
+	activeEnforcer = e
+}
 
 var lastWarningTime = make(map[string]time.Time)
 var lastWarningMu sync.Mutex
@@ -254,19 +262,40 @@ func evaluateRules() {
 	newBlocked := EvaluateRulesAtTime(now, cfg)
 	warningDomains := CheckWarningDomainsAtTime(now, cfg)
 
-	var newlyBlockedDomains []string
+	// Compute diffs relative to the previous tick.
+	var newlyBlocked, newlyUnblocked []string
+	activeBlocksMu.RLock()
 	for domain := range newBlocked {
 		if !activeBlocks[domain] {
-			newlyBlockedDomains = append(newlyBlockedDomains, domain)
+			newlyBlocked = append(newlyBlocked, domain)
 		}
 	}
-	requiresFlush := len(newlyBlockedDomains) > 0 || len(newBlocked) != len(activeBlocks)
+	for domain := range activeBlocks {
+		if !newBlocked[domain] {
+			newlyUnblocked = append(newlyUnblocked, domain)
+		}
+	}
+	activeBlocksMu.RUnlock()
 
 	activeBlocksMu.Lock()
 	activeBlocks = newBlocked
 	lastEvalTime = now
 	activeBlocksMu.Unlock()
-	proxy.UpdateBlockedDomains(newBlocked)
+
+	// Push changes through the enforcement backend.
+	if activeEnforcer != nil {
+		if len(newlyBlocked) > 0 {
+			if err := activeEnforcer.Activate(newlyBlocked); err != nil {
+				log.Printf("scheduler: activate failed: %v", err)
+			}
+			closeMacOSTabs(newlyBlocked)
+		}
+		if len(newlyUnblocked) > 0 {
+			if err := activeEnforcer.Deactivate(newlyUnblocked); err != nil {
+				log.Printf("scheduler: deactivate failed: %v", err)
+			}
+		}
+	}
 
 	if len(warningDomains) > 0 {
 		var domainsToWarn []string
@@ -281,13 +310,6 @@ func evaluateRules() {
 		lastWarningMu.Unlock()
 		if len(domainsToWarn) > 0 {
 			runMacOSWarning(domainsToWarn)
-		}
-	}
-
-	if requiresFlush {
-		flushDNS()
-		if len(newlyBlockedDomains) > 0 {
-			closeMacOSTabs(newlyBlockedDomains)
 		}
 	}
 }
@@ -444,12 +466,3 @@ func closeMacOSTabs(domains []string) {
 	scriptExecutor.ExecuteScript(script)
 }
 
-func flushDNS() {
-	if runtime.GOOS == "darwin" {
-		exec.Command("dscacheutil", "-flushcache").Run()
-		exec.Command("killall", "-HUP", "mDNSResponder").Run()
-		log.Println("macOS DNS Cache Flushed.")
-	} else if runtime.GOOS == "windows" {
-		exec.Command("ipconfig", "/flushdns").Run()
-	}
-}

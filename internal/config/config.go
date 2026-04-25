@@ -22,9 +22,22 @@ type Rule struct {
 }
 
 type Settings struct {
-	PrimaryDNS string `json:"primary_dns"`
-	BackupDNS  string `json:"backup_dns"`
-	AuthToken  string `json:"auth_token"`
+	PrimaryDNS      string `json:"primary_dns"`
+	BackupDNS       string `json:"backup_dns"`
+	AuthToken       string `json:"auth_token"`
+	EnforcementMode string `json:"enforcement_mode,omitempty"`
+}
+
+// GetEnforcementMode returns the validated enforcement mode, defaulting to "hosts"
+// when the field is absent or unrecognised. This means existing configs that predate
+// this field automatically get the new default without any migration step.
+func (s Settings) GetEnforcementMode() string {
+	switch s.EnforcementMode {
+	case "hosts", "dns", "strict":
+		return s.EnforcementMode
+	default:
+		return "hosts"
+	}
 }
 
 type Config struct {
@@ -95,6 +108,29 @@ func LoadConfig() error {
 	return nil
 }
 
+// SetEnforcementMode updates the in-memory enforcement mode.
+// Call SaveConfig to persist the change to disk.
+func SetEnforcementMode(mode string) {
+	mu.Lock()
+	defer mu.Unlock()
+	AppConfig.Settings.EnforcementMode = mode
+}
+
+// SaveConfig writes the current in-memory config to disk.
+func SaveConfig() error {
+	path, err := GetConfigFilePath()
+	if err != nil {
+		return err
+	}
+	mu.RLock()
+	data, err := json.MarshalIndent(AppConfig, "", "  ")
+	mu.RUnlock()
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
+}
+
 func saveDefaultConfig(path string) error {
 	token, err := generateToken()
 	if err != nil {
@@ -102,9 +138,10 @@ func saveDefaultConfig(path string) error {
 	}
 	AppConfig = Config{
 		Settings: Settings{
-			PrimaryDNS: "8.8.8.8:53",
-			BackupDNS:  "1.1.1.1:53",
-			AuthToken:  token,
+			PrimaryDNS:      "8.8.8.8:53",
+			BackupDNS:       "1.1.1.1:53",
+			AuthToken:       token,
+			EnforcementMode: "hosts",
 		},
 		Rules: []Rule{
 			{

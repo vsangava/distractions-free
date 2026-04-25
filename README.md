@@ -16,7 +16,9 @@ Unlike browser extensions that can be easily disabled, **Distractions-Free** run
 
 | Feature | macOS | Windows |
 |---|---|---|
-| DNS blocking | ✅ | ✅ |
+| Hosts-file blocking (default) | ✅ | ✅ |
+| DNS proxy blocking (`"dns"` mode) | ✅ | ✅ |
+| Strict mode — DNS + pf firewall (`"strict"`) | 🔜 planned | ❌ |
 | Automatic browser tab closing | ✅ (Chrome, Safari via AppleScript) | ❌ |
 | Pre-block warning notifications | ✅ (native macOS notifications) | ❌ |
 | System service (auto-start on boot) | ✅ (launchd) | ✅ (Windows Service) |
@@ -89,6 +91,28 @@ networksetup -setdnsservers Ethernet 127.0.0.1
 Once the service is running, you can access the local dashboard and API via:
 👉 **http://localhost:8040**
 
+### Enforcement Modes
+
+Distractions-Free supports three enforcement modes, configured via the `enforcement_mode` field in `settings`. If the field is absent the daemon defaults to `"hosts"`.
+
+| Mode | Value | How it blocks | Requires root |
+|---|---|---|---|
+| **Standard** (default) | `"hosts"` | Edits `/etc/hosts` | Yes (write to hosts file) |
+| **DNS Proxy** | `"dns"` | Local DNS proxy on 127.0.0.1:53 | Yes (port < 1024) |
+| **Strict** | `"strict"` | DNS proxy + pf firewall *(pf is planned; currently DNS-only)* | Yes |
+
+**Choosing a mode:**
+- `"hosts"` is the default and works without changing your system DNS settings. It adds entries to `/etc/hosts` inside clearly-marked managed markers and removes them when the block ends. Common subdomains (`www.`, `m.`, `mobile.`, `app.`) are blocked automatically. This is the best choice for most users.
+- `"dns"` is the legacy mode. It runs a local DNS proxy on port 53 and requires you to point your OS DNS at `127.0.0.1`. Use this if you relied on the old behaviour.
+- `"strict"` adds a `pf` firewall layer on top of DNS. Full pf integration is in development; for now it behaves identically to `"dns"`.
+
+To switch to DNS proxy mode, set `"enforcement_mode": "dns"` in config and restart the service. Alternatively, use the `--strict` shorthand:
+
+```bash
+sudo ./distractions-free --strict   # sets mode to "strict" in config
+sudo ./distractions-free start      # service picks up the new mode
+```
+
 ### Modifying the Schedule
 By default, the daemon stores its configuration file at a secure, absolute system path:
 * **macOS:** \`/Library/Application Support/DistractionsFree/config.json\`
@@ -101,7 +125,8 @@ To update your rules, simply edit this file. The background daemon will automati
 {
   "settings": {
     "primary_dns": "8.8.8.8:53",
-    "backup_dns": "1.1.1.1:53"
+    "backup_dns": "1.1.1.1:53",
+    "enforcement_mode": "hosts"
   },
   "rules": [
     {
@@ -122,6 +147,11 @@ To update your rules, simply edit this file. The background daemon will automati
   ]
 }
 ```
+
+> **Migrating from a previous version?** Older installs had no `enforcement_mode` field, which means they were using the DNS proxy. After upgrading, the daemon will switch to `"hosts"` mode automatically. If you want to keep the old DNS proxy behaviour, add `"enforcement_mode": "dns"` to your config and also restore your system DNS (which was pointing at `127.0.0.1`):
+> ```bash
+> networksetup -setdnsservers Wi-Fi 127.0.0.1   # macOS — point DNS at the proxy
+> ```
 
 ---
 
