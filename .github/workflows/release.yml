@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     name: Build and Release
+    permissions:
+      contents: write
     strategy:
       matrix:
         include:
