@@ -519,7 +519,12 @@
             metaEl.textContent = '';
             try {
                 const response = await fetch('/api/status', {
-                    headers: { 'X-Auth-Token': authToken }
+                    method: 'POST',
+                    headers: {
+                        'X-Auth-Token': authToken,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(currentConfig)
                 });
                 if (!response.ok) {
                     contentEl.innerHTML = '<div class="error-banner">Failed to load status (is the service running?)</div>';

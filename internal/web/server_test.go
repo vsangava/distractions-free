@@ -1,10 +1,12 @@
 package web
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/vsangava/distractions-free/internal/config"
 )
@@ -338,6 +340,95 @@ func TestConfigHandler_ValidJSONAfterMarshal(t *testing.T) {
 	_, err = json.Marshal(cfg)
 	if err != nil {
 		t.Errorf("failed to marshal config back to JSON: %v", err)
+	}
+}
+
+// TestStatusHandler_UsesPostedConfig verifies that StatusHandler evaluates blocking
+// using a config POSTed in the request body when the scheduler hasn't run (lastEvalTime
+// zero). This is the --test-web mode scenario: the user edits config in the browser
+// textarea and expects Status to reflect the same config as test-query.
+func TestStatusHandler_UsesPostedConfig(t *testing.T) {
+	now := time.Now()
+	day := now.Weekday().String()
+	start := now.Add(-1 * time.Hour).Format("15:04")
+	end := now.Add(1 * time.Hour).Format("15:04")
+
+	blocked := config.Config{
+		Settings: config.Settings{PrimaryDNS: "8.8.8.8:53", BackupDNS: "1.1.1.1:53"},
+		Rules: []config.Rule{
+			{
+				Domain:   "youtube.com",
+				IsActive: true,
+				Schedules: map[string][]config.TimeSlot{
+					day: {{Start: start, End: end}},
+				},
+			},
+		},
+	}
+
+	body, _ := json.Marshal(blocked)
+	req, _ := http.NewRequest("POST", "/api/status", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	rr := httptest.NewRecorder()
+	StatusHandler(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var result map[string]any
+	if err := json.NewDecoder(rr.Body).Decode(&result); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	domains, ok := result["blocked_domains"].(map[string]any)
+	if !ok {
+		t.Fatalf("blocked_domains missing or wrong type: %v", result)
+	}
+	if domains["youtube.com"] != true {
+		t.Errorf("expected youtube.com to be blocked, got blocked_domains=%v", domains)
+	}
+}
+
+// TestStatusHandler_EmptyWhenNotBlocked verifies that a domain outside its schedule
+// window is not reported as blocked.
+func TestStatusHandler_EmptyWhenNotBlocked(t *testing.T) {
+	notBlocked := config.Config{
+		Settings: config.Settings{PrimaryDNS: "8.8.8.8:53", BackupDNS: "1.1.1.1:53"},
+		Rules: []config.Rule{
+			{
+				Domain:   "youtube.com",
+				IsActive: true,
+				Schedules: map[string][]config.TimeSlot{
+					// Window in the past — never active now
+					"Monday": {{Start: "01:00", End: "01:01"}},
+					"Tuesday": {{Start: "01:00", End: "01:01"}},
+					"Wednesday": {{Start: "01:00", End: "01:01"}},
+					"Thursday": {{Start: "01:00", End: "01:01"}},
+					"Friday": {{Start: "01:00", End: "01:01"}},
+					"Saturday": {{Start: "01:00", End: "01:01"}},
+					"Sunday": {{Start: "01:00", End: "01:01"}},
+				},
+			},
+		},
+	}
+
+	body, _ := json.Marshal(notBlocked)
+	req, _ := http.NewRequest("POST", "/api/status", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	rr := httptest.NewRecorder()
+	StatusHandler(rr, req)
+
+	var result map[string]any
+	if err := json.NewDecoder(rr.Body).Decode(&result); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	domains := result["blocked_domains"].(map[string]any)
+	if domains["youtube.com"] == true {
+		t.Errorf("expected youtube.com not to be blocked outside its window")
 	}
 }
 

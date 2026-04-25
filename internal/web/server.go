@@ -33,9 +33,13 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// ConfigHandler is a testable handler that returns the current config as JSON.
+// ConfigHandler returns the current config as JSON, reloading from disk first so the
+// browser always sees the latest file state rather than the startup snapshot.
 func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	if err := config.LoadConfig(); err != nil {
+		log.Printf("config reload warning: %v", err)
+	}
 	cfg := config.GetConfig()
 	json.NewEncoder(w).Encode(cfg)
 }
@@ -127,18 +131,35 @@ func UpdateConfigHandler(w http.ResponseWriter, r *http.Request) {
 
 // StatusHandler returns the currently blocked domains and the last evaluation timestamp.
 // When the scheduler is not running (e.g. --test-web mode), it evaluates rules at
-// time.Now() directly from config so the result is always meaningful.
+// time.Now() using whichever config the caller POSTs (same as test-query), falling
+// back to a fresh disk reload if no body is provided.
 func StatusHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	blocked, lastEval := scheduler.GetStatus()
 	if lastEval.IsZero() {
-		blocked = scheduler.EvaluateRulesAtTime(time.Now(), config.GetConfig())
+		cfg := resolveConfig(r)
+		blocked = scheduler.EvaluateRulesAtTime(time.Now(), cfg)
 		lastEval = time.Now()
 	}
 	json.NewEncoder(w).Encode(map[string]any{
 		"blocked_domains": blocked,
 		"last_evaluated":  lastEval,
 	})
+}
+
+// resolveConfig extracts a config from the request body if present, otherwise reloads
+// from disk. Used by endpoints that need the "current" config in --test-web mode.
+func resolveConfig(r *http.Request) config.Config {
+	if r.Body != nil && r.Header.Get("Content-Type") == "application/json" {
+		var posted config.Config
+		if err := json.NewDecoder(r.Body).Decode(&posted); err == nil {
+			return posted
+		}
+	}
+	if err := config.LoadConfig(); err != nil {
+		log.Printf("config reload warning: %v", err)
+	}
+	return config.GetConfig()
 }
 
 // TestQueryHandler handles test queries for the web UI.
