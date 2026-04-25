@@ -22,6 +22,20 @@ const (
 // bloating the hosts file.
 var subdomainPrefixes = []string{"", "www.", "m.", "mobile.", "app."}
 
+// GenerateHostsEntries returns the /etc/hosts lines that would be written for
+// the given domains — one line per (domain × prefix) combination. No file is
+// read or written; this is a pure preview function used for testing and the
+// web UI hosts-preview endpoint.
+func GenerateHostsEntries(domains []string) []string {
+	var entries []string
+	for _, domain := range domains {
+		for _, prefix := range subdomainPrefixes {
+			entries = append(entries, blockingIP+" "+prefix+domain)
+		}
+	}
+	return entries
+}
+
 // HostsEnforcer blocks domains by writing entries into /etc/hosts inside a
 // clearly-marked managed section, leaving all other entries untouched.
 type HostsEnforcer struct {

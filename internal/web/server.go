@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/vsangava/distractions-free/internal/config"
+	"github.com/vsangava/distractions-free/internal/enforcer"
 	"github.com/vsangava/distractions-free/internal/scheduler"
 	"github.com/vsangava/distractions-free/internal/testcli"
 )
@@ -261,6 +262,32 @@ func StaticFileHandler() (http.Handler, error) {
 	return http.FileServer(http.FS(fsys)), nil
 }
 
+// HostsPreviewHandler evaluates which domains are currently blocked under the
+// posted config (or the disk config if no body is provided) and returns the
+// /etc/hosts entries that would be written by HostsEnforcer — without touching
+// any file on the system. Useful for testing enforcement logic in --test-web mode.
+func HostsPreviewHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	cfg := resolveConfig(r)
+	mode := cfg.Settings.GetEnforcementMode()
+
+	blocked := scheduler.EvaluateRulesAtTime(time.Now(), cfg)
+
+	var domains []string
+	for d := range blocked {
+		domains = append(domains, d)
+	}
+
+	entries := enforcer.GenerateHostsEntries(domains)
+
+	json.NewEncoder(w).Encode(map[string]any{
+		"enforcement_mode": mode,
+		"blocked_domains":  domains,
+		"hosts_entries":    entries,
+		"evaluated_at":     time.Now(),
+	})
+}
+
 func StartWebServer() {
 	staticHandler, err := StaticFileHandler()
 	if err != nil {
@@ -273,6 +300,7 @@ func StartWebServer() {
 	mux.HandleFunc("/api/status", authMiddleware(StatusHandler))
 	mux.HandleFunc("/api/test-query", authMiddleware(TestQueryHandler))
 	mux.HandleFunc("/api/config/update", authMiddleware(UpdateConfigHandler))
+	mux.HandleFunc("/api/hosts-preview", authMiddleware(HostsPreviewHandler))
 
 	log.Println("Web server starting on http://localhost:8040")
 	if err := http.ListenAndServe("127.0.0.1:8040", mux); err != nil {
@@ -297,6 +325,7 @@ func StartTestWebServer() {
 	mux.HandleFunc("/api/status", authMiddleware(StatusHandler))
 	mux.HandleFunc("/api/test-query", authMiddleware(TestQueryHandler))
 	mux.HandleFunc("/api/config/update", authMiddleware(UpdateConfigHandler))
+	mux.HandleFunc("/api/hosts-preview", authMiddleware(HostsPreviewHandler))
 
 	log.Println("Test web server starting on http://localhost:8040")
 	if err := http.ListenAndServe("127.0.0.1:8040", mux); err != nil {

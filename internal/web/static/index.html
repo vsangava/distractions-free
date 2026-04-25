@@ -392,6 +392,18 @@
             </div>
 
             <div id="configMessage"></div>
+            <div id="hostsPreview" style="display:none; margin-top:20px;">
+                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+                    <span style="font-weight:600; font-size:14px; color:#333;">📄 /etc/hosts preview <span style="font-weight:400; color:#888;">(simulated — no files touched)</span></span>
+                    <span id="hostsPreviewMeta" style="font-size:12px; color:#888;"></span>
+                </div>
+                <pre id="hostsPreviewContent" style="
+                    background:#1e1e2e; color:#cdd6f4; border-radius:8px;
+                    padding:16px; font-size:13px; line-height:1.6;
+                    overflow-x:auto; white-space:pre-wrap; margin:0;
+                    border:1px solid #313244;
+                "></pre>
+            </div>
         </div>
 
         <div id="statusTab" class="tab-content">
@@ -651,16 +663,18 @@
             validateConfigSilent();
         }
 
-        function validateConfig() {
+        async function validateConfig() {
             const configText = document.getElementById('config').value.trim();
             const statusEl = document.getElementById('configStatus');
             const messageEl = document.getElementById('configMessage');
+            const previewEl = document.getElementById('hostsPreview');
             const validation = parseAndValidateConfig(configText);
 
             if (!validation.valid) {
                 statusEl.textContent = '❌ ' + validation.error;
                 statusEl.className = 'config-status invalid';
                 messageEl.innerHTML = '<div class="error-banner">' + validation.error + '</div>';
+                previewEl.style.display = 'none';
                 return false;
             }
 
@@ -669,7 +683,55 @@
             statusEl.textContent = '✅ Config is valid';
             statusEl.className = 'config-status valid';
             messageEl.innerHTML = '<div class="success-banner">✅ Edited config accepted and will be used for test queries.</div>';
+
+            await refreshHostsPreview();
             return true;
+        }
+
+        async function refreshHostsPreview() {
+            const previewEl = document.getElementById('hostsPreview');
+            const contentEl = document.getElementById('hostsPreviewContent');
+            const metaEl = document.getElementById('hostsPreviewMeta');
+
+            try {
+                const res = await fetch('/api/hosts-preview', {
+                    method: 'POST',
+                    headers: { 'X-Auth-Token': authToken, 'Content-Type': 'application/json' },
+                    body: JSON.stringify(currentConfig)
+                });
+                if (!res.ok) { previewEl.style.display = 'none'; return; }
+                const data = await res.json();
+
+                const mode = data.enforcement_mode || 'hosts';
+                const entries = data.hosts_entries || [];
+                const domains = data.blocked_domains || [];
+                const evalAt = data.evaluated_at ? new Date(data.evaluated_at).toLocaleTimeString() : '';
+
+                if (mode !== 'hosts') {
+                    previewEl.style.display = 'block';
+                    contentEl.textContent = '# Hosts preview is only applicable in "hosts" enforcement mode.\n# Current mode: ' + mode;
+                    metaEl.textContent = '';
+                    return;
+                }
+
+                previewEl.style.display = 'block';
+                metaEl.textContent = 'evaluated at ' + evalAt;
+
+                if (entries.length === 0) {
+                    contentEl.textContent = '# No domains are currently in a block window.\n# /etc/hosts will have no managed entries right now.';
+                } else {
+                    const lines = [
+                        '# distractions-free:begin',
+                        ...entries,
+                        '# distractions-free:end',
+                        '',
+                        '# ' + domains.length + ' domain(s) blocked · ' + entries.length + ' host entries'
+                    ];
+                    contentEl.textContent = lines.join('\n');
+                }
+            } catch (e) {
+                previewEl.style.display = 'none';
+            }
         }
 
         function validateConfigSilent() {
