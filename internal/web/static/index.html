@@ -292,6 +292,42 @@
             font-size: 13px;
             padding: 8px 18px;
         }
+        .pause-panel {
+            margin-top: 20px;
+            padding: 16px;
+            border-radius: 8px;
+            border: 2px solid #e0e0e0;
+            background: #fafafa;
+        }
+        .pause-panel h3 {
+            font-size: 14px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 12px;
+        }
+        .pause-active {
+            border-color: #ffc107;
+            background: #fff8e1;
+        }
+        .pause-active h3 {
+            color: #856404;
+        }
+        .pause-until {
+            font-size: 14px;
+            color: #856404;
+            margin-bottom: 12px;
+            font-weight: 600;
+        }
+        .button-pause {
+            background: linear-gradient(135deg, #fd7e14 0%, #e55a00 100%);
+            font-size: 13px;
+            padding: 8px 16px;
+        }
+        .button-resume {
+            background: linear-gradient(135deg, #28a745 0%, #1e7e34 100%);
+            font-size: 13px;
+            padding: 8px 18px;
+        }
     </style>
 </head>
 <body>
@@ -429,6 +465,22 @@
             <div id="statusContent" style="margin-top: 16px;">
                 <p style="color: #999;">Loading...</p>
             </div>
+            <div id="pausePanel" class="pause-panel" style="display:none;">
+                <h3 id="pausePanelTitle">⏸ Pause Blocking</h3>
+                <div id="pauseActive" style="display:none;">
+                    <div class="pause-until" id="pauseUntilText"></div>
+                    <button class="button-resume" onclick="resumeBlocking()">▶ Resume Now</button>
+                </div>
+                <div id="pauseInactive">
+                    <div class="button-group" style="margin-bottom:0;">
+                        <button class="button-pause" onclick="pauseBlocking(15)">15 min</button>
+                        <button class="button-pause" onclick="pauseBlocking(30)">30 min</button>
+                        <button class="button-pause" onclick="pauseBlocking(60)">1 hour</button>
+                        <button class="button-pause" onclick="pauseBlocking(120)">2 hours</button>
+                    </div>
+                </div>
+            </div>
+            <div id="pauseMessage" style="margin-top:10px;"></div>
         </div>
     </div>
     
@@ -582,8 +634,67 @@
                     const items = domains.map(d => '<li>' + d + '</li>').join('');
                     contentEl.innerHTML = '<ul class="blocked-list">' + items + '</ul>';
                 }
+
+                // Render pause panel.
+                const panel = document.getElementById('pausePanel');
+                panel.style.display = 'block';
+                if (data.paused && data.paused_until) {
+                    const until = new Date(data.paused_until);
+                    panel.classList.add('pause-active');
+                    document.getElementById('pausePanelTitle').textContent = '⏸ Blocking Paused';
+                    document.getElementById('pauseUntilText').textContent =
+                        'Blocking paused until ' + until.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+                    document.getElementById('pauseActive').style.display = 'block';
+                    document.getElementById('pauseInactive').style.display = 'none';
+                } else {
+                    panel.classList.remove('pause-active');
+                    document.getElementById('pausePanelTitle').textContent = '⏸ Pause Blocking';
+                    document.getElementById('pauseActive').style.display = 'none';
+                    document.getElementById('pauseInactive').style.display = 'block';
+                }
             } catch (err) {
                 contentEl.innerHTML = '<div class="error-banner">Error fetching status: ' + err.message + '</div>';
+            }
+        }
+
+        async function pauseBlocking(minutes) {
+            const msgEl = document.getElementById('pauseMessage');
+            try {
+                const res = await fetch('/api/pause', {
+                    method: 'POST',
+                    headers: { 'X-Auth-Token': authToken, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ minutes })
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    msgEl.innerHTML = '<div class="error-banner">' + (data.error || 'Failed to pause') + '</div>';
+                    return;
+                }
+                const until = new Date(data.paused_until);
+                msgEl.innerHTML = '<div class="success-banner">⏸ Blocking paused until ' +
+                    until.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) + '</div>';
+                await loadStatus();
+            } catch (err) {
+                msgEl.innerHTML = '<div class="error-banner">Error: ' + err.message + '</div>';
+            }
+        }
+
+        async function resumeBlocking() {
+            const msgEl = document.getElementById('pauseMessage');
+            try {
+                const res = await fetch('/api/pause', {
+                    method: 'DELETE',
+                    headers: { 'X-Auth-Token': authToken }
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    msgEl.innerHTML = '<div class="error-banner">' + (data.error || 'Failed to resume') + '</div>';
+                    return;
+                }
+                msgEl.innerHTML = '<div class="success-banner">▶ Blocking resumed.</div>';
+                await loadStatus();
+            } catch (err) {
+                msgEl.innerHTML = '<div class="error-banner">Error: ' + err.message + '</div>';
             }
         }
         
