@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -22,6 +24,7 @@ type Rule struct {
 type Settings struct {
 	PrimaryDNS string `json:"primary_dns"`
 	BackupDNS  string `json:"backup_dns"`
+	AuthToken  string `json:"auth_token"`
 }
 
 type Config struct {
@@ -54,6 +57,14 @@ func GetConfigFilePath() (string, error) {
 	return filepath.Join(dir, "config.json"), nil
 }
 
+func generateToken() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
 func LoadConfig() error {
 	path, err := GetConfigFilePath()
 	if err != nil {
@@ -69,14 +80,31 @@ func LoadConfig() error {
 		}
 		return err
 	}
-	return json.Unmarshal(data, &AppConfig)
+	if err := json.Unmarshal(data, &AppConfig); err != nil {
+		return err
+	}
+	if AppConfig.Settings.AuthToken == "" {
+		token, err := generateToken()
+		if err != nil {
+			return err
+		}
+		AppConfig.Settings.AuthToken = token
+		updated, _ := json.MarshalIndent(AppConfig, "", "  ")
+		os.WriteFile(path, updated, 0644)
+	}
+	return nil
 }
 
 func saveDefaultConfig(path string) error {
+	token, err := generateToken()
+	if err != nil {
+		return err
+	}
 	AppConfig = Config{
 		Settings: Settings{
 			PrimaryDNS: "8.8.8.8:53",
 			BackupDNS:  "1.1.1.1:53",
+			AuthToken:  token,
 		},
 		Rules: []Rule{
 			{

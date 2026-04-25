@@ -12,6 +12,15 @@ Unlike browser extensions that can be easily disabled, **Distractions-Free** run
 * **Embedded Dashboard**: Ships with an embedded web UI and JSON API (no external web assets required).
 * **System Service Integration**: Installs itself automatically as a \`launchd\` daemon on macOS to survive reboots.
 
+### Platform feature support
+
+| Feature | macOS | Windows |
+|---|---|---|
+| DNS blocking | ✅ | ✅ |
+| Automatic browser tab closing | ✅ (Chrome, Safari via AppleScript) | ❌ |
+| Pre-block warning notifications | ✅ (native macOS notifications) | ❌ |
+| System service (auto-start on boot) | ✅ (launchd) | ✅ (Windows Service) |
+
 ---
 
 ## ⚡ Quick Download
@@ -92,8 +101,8 @@ To update your rules, simply edit this file. The background daemon will automati
 ``` json
 {
   "settings": {
-    "primary_dns": "8.8.8.8",
-    "backup_dns": "1.1.1.1"
+    "primary_dns": "8.8.8.8:53",
+    "backup_dns": "1.1.1.1:53"
   },
   "rules": [
     {
@@ -262,7 +271,7 @@ Output: Shows `⚠️ Warning will trigger 3 minutes before block!`
 - ✅ **No system impact**: Uses local config file, no service needed
 - ✅ **Real DNS queries**: Shows actual upstream DNS responses
 - ✅ **Debug schedules**: Check if a specific time/domain/day combination triggers blocking
-- ✅ **No privileges**: Runs as regular user with `--no-service` mode
+- ⚠️ **Root still required**: `--no-service` avoids service installation but still binds port 53, which requires root on all Unix systems. Use `sudo` even in this mode.
 
 
 ---

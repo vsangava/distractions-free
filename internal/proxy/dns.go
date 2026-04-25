@@ -12,12 +12,25 @@ import (
 var (
 	blockedDomains map[string]bool
 	blockMu        sync.RWMutex
+	dnsServer      *dns.Server
 )
 
 func UpdateBlockedDomains(newBlocked map[string]bool) {
 	blockMu.Lock()
 	defer blockMu.Unlock()
 	blockedDomains = newBlocked
+}
+
+func isDomainBlocked(domain string, blocked map[string]bool) bool {
+	if blocked[domain] {
+		return true
+	}
+	for d := range blocked {
+		if strings.HasSuffix(domain, "."+d) {
+			return true
+		}
+	}
+	return false
 }
 
 // GetDNSResponse is a testable function that processes DNS requests without binding to a port.
@@ -34,10 +47,7 @@ func GetDNSResponse(r *dns.Msg, blockedDomainsList map[string]bool, primaryDNS, 
 	q := r.Question[0]
 	domain := strings.TrimSuffix(q.Name, ".")
 
-	// Check if domain is blocked
-	isBlocked := blockedDomainsList[domain]
-
-	if isBlocked && q.Qtype == dns.TypeA {
+	if isDomainBlocked(domain, blockedDomainsList) && q.Qtype == dns.TypeA {
 		rr, _ := dns.NewRR(q.Name + " 60 IN A 0.0.0.0")
 		m.Answer = append(m.Answer, rr)
 		return m, nil
@@ -76,9 +86,17 @@ func StartDNSServer() {
 	UpdateBlockedDomains(make(map[string]bool))
 	dns.HandleFunc(".", handleDNSRequest)
 
-	server := &dns.Server{Addr: "127.0.0.1:53", Net: "udp"}
+	dnsServer = &dns.Server{Addr: "127.0.0.1:53", Net: "udp"}
 	log.Printf("Starting local DNS proxy on 127.0.0.1:53...")
-	if err := server.ListenAndServe(); err != nil {
+	if err := dnsServer.ListenAndServe(); err != nil {
 		log.Fatalf("Failed to start DNS server: %s", err.Error())
+	}
+}
+
+func StopDNSServer() {
+	if dnsServer != nil {
+		if err := dnsServer.Shutdown(); err != nil {
+			log.Printf("DNS server shutdown error: %v", err)
+		}
 	}
 }

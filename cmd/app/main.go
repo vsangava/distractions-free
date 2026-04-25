@@ -78,6 +78,7 @@ func (p *program) run() {
 
 func (p *program) Stop(s service.Service) error {
 	log.Println("Stopping service... restoring default OS DNS.")
+	proxy.StopDNSServer()
 	if runtime.GOOS == "darwin" {
 		exec.Command("networksetup", "-setdnsservers", "Wi-Fi", "Empty").Run()
 		exec.Command("dscacheutil", "-flushcache").Run()

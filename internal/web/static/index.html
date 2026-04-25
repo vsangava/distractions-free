@@ -434,6 +434,7 @@
 
         let currentConfig = defaultConfig;
         let lastValidConfigText = JSON.stringify(defaultConfig, null, 2);
+        let authToken = '';
 
         window.onload = async function() {
             setConfigTextarea(defaultConfig);
@@ -520,6 +521,9 @@
             try {
                 const response = await fetch('/api/config');
                 const config = await response.json();
+                if (config.settings && config.settings.auth_token) {
+                    authToken = config.settings.auth_token;
+                }
                 const parsedText = JSON.stringify(config, null, 2);
                 const validation = parseAndValidateConfig(parsedText);
                 if (validation.valid) {
@@ -631,10 +635,11 @@
                 formData.append('time', time);
                 formData.append('domain', domain);
                 
-                const url = '/api/test-query?time=' + encodeURIComponent(time) + 
+                const url = '/api/test-query?time=' + encodeURIComponent(time) +
                            '&domain=' + encodeURIComponent(domain);
                 const response = await fetch(url, {
                     method: 'POST',
+                    headers: { 'X-Auth-Token': authToken },
                     body: formData
                 });
                 const result = await response.json();

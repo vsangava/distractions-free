@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/vsangava/distractions-free/internal/config"
@@ -15,7 +16,11 @@ import (
 )
 
 var activeBlocks = make(map[string]bool)
-var lastWarningTime = make(map[string]time.Time) // Track last warning time per domain
+var activeBlocksMu sync.RWMutex
+var lastEvalTime time.Time
+
+var lastWarningTime = make(map[string]time.Time)
+var lastWarningMu sync.Mutex
 
 // ScriptExecutor interface for testing AppleScript execution
 type ScriptExecutor interface {
@@ -27,8 +32,11 @@ type ScriptExecutor interface {
 type MacOSScriptExecutor struct{}
 
 func (e *MacOSScriptExecutor) ExecuteScript(script string) error {
-	runAsMacUser(script)
-	return nil // runAsMacUser doesn't return an error, so we assume success
+	if err := runAsMacUser(script); err != nil {
+		log.Printf("AppleScript execution failed: %v", err)
+		return err
+	}
+	return nil
 }
 
 func (e *MacOSScriptExecutor) LogScript(script string) {
@@ -142,23 +150,37 @@ func SetScriptExecutor(executor ScriptExecutor) {
 	scriptExecutor = executor
 }
 
+// GetStatus returns the currently blocked domains and the last evaluation time.
+func GetStatus() (blocked map[string]bool, lastEval time.Time) {
+	activeBlocksMu.RLock()
+	defer activeBlocksMu.RUnlock()
+	cp := make(map[string]bool, len(activeBlocks))
+	for k, v := range activeBlocks {
+		cp[k] = v
+	}
+	return cp, lastEvalTime
+}
+
 // EvaluateRulesAtTime evaluates blocking rules at a specific time and returns blocked domains.
 // This is the testable function that doesn't depend on time.Now().
 func EvaluateRulesAtTime(t time.Time, cfg config.Config) map[string]bool {
 	currentDay := t.Weekday().String()
-	currentTime := t.Format("15:04")
+	now := time.Date(0, 1, 1, t.Hour(), t.Minute(), 0, 0, time.UTC)
 
 	newBlocked := make(map[string]bool)
 
-	// Evaluate times
 	for _, rule := range cfg.Rules {
 		if !rule.IsActive {
 			continue
 		}
 		if slots, exists := rule.Schedules[currentDay]; exists {
 			for _, slot := range slots {
-				// Check active blocks
-				if currentTime >= slot.Start && currentTime < slot.End {
+				slotStart, errS := time.Parse("15:04", slot.Start)
+				slotEnd, errE := time.Parse("15:04", slot.End)
+				if errS != nil || errE != nil {
+					continue
+				}
+				if (now.Equal(slotStart) || now.After(slotStart)) && now.Before(slotEnd) {
 					newBlocked[rule.Domain] = true
 					break
 				}
@@ -223,6 +245,9 @@ func Start() {
 }
 
 func evaluateRules() {
+	if err := config.LoadConfig(); err != nil {
+		log.Printf("Config reload warning: %v", err)
+	}
 	cfg := config.GetConfig()
 	now := time.Now()
 
@@ -230,35 +255,30 @@ func evaluateRules() {
 	warningDomains := CheckWarningDomainsAtTime(now, cfg)
 
 	var newlyBlockedDomains []string
-	requiresFlush := false
-
-	// Check if state changed (domains added or removed)
-	if len(newBlocked) != len(activeBlocks) || len(newlyBlockedDomains) > 0 {
-		for domain := range newBlocked {
-			if !activeBlocks[domain] {
-				newlyBlockedDomains = append(newlyBlockedDomains, domain)
-			}
-		}
-		if len(newlyBlockedDomains) > 0 {
-			requiresFlush = true
+	for domain := range newBlocked {
+		if !activeBlocks[domain] {
+			newlyBlockedDomains = append(newlyBlockedDomains, domain)
 		}
 	}
+	requiresFlush := len(newlyBlockedDomains) > 0 || len(newBlocked) != len(activeBlocks)
 
-	// Apply states
+	activeBlocksMu.Lock()
 	activeBlocks = newBlocked
+	lastEvalTime = now
+	activeBlocksMu.Unlock()
 	proxy.UpdateBlockedDomains(newBlocked)
 
-	// Show warnings only for domains we haven't warned about recently
 	if len(warningDomains) > 0 {
 		var domainsToWarn []string
+		lastWarningMu.Lock()
 		for _, domain := range warningDomains {
-			// Only warn if we haven't warned in the last minute
 			lastTime, exists := lastWarningTime[domain]
 			if !exists || now.Sub(lastTime) >= 1*time.Minute {
 				domainsToWarn = append(domainsToWarn, domain)
 				lastWarningTime[domain] = now
 			}
 		}
+		lastWarningMu.Unlock()
 		if len(domainsToWarn) > 0 {
 			runMacOSWarning(domainsToWarn)
 		}
@@ -284,21 +304,28 @@ func getMacUser() string {
 	return user
 }
 
-func runAsMacUser(scriptContent string) {
+func runAsMacUser(scriptContent string) error {
 	if runtime.GOOS != "darwin" {
-		return
+		return nil
 	}
 
 	scriptPath := "/tmp/df_script.scpt"
-	os.WriteFile(scriptPath, []byte(scriptContent), 0644)
-
-	user := getMacUser()
-	if user == "" || os.Getuid() != 0 {
-		exec.Command("osascript", scriptPath).Run()
-		return
+	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0644); err != nil {
+		return fmt.Errorf("write script: %w", err)
 	}
 
-	exec.Command("su", "-", user, "-c", "osascript "+scriptPath).Run()
+	user := getMacUser()
+	var cmd *exec.Cmd
+	if user == "" || os.Getuid() != 0 {
+		cmd = exec.Command("osascript", scriptPath)
+	} else {
+		cmd = exec.Command("su", "-", user, "-c", "osascript "+scriptPath)
+	}
+
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("osascript: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func getOpenBrowserDomains(domains []string) []string {
