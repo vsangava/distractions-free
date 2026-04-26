@@ -968,6 +968,125 @@ function renderRulesSummary(cfg) {
         '</tr></thead><tbody>' + rows + '</tbody></table>';
 }
 
+// ── Test tab ──────────────────────────────────────────────────────────────────
+function setDefaultTestTime() {
+    var now = new Date();
+    var pad = function(n) { return String(n).padStart(2, '0'); };
+    document.getElementById('testTime').value =
+        now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate()) +
+        ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes());
+}
+
+function toggleCustomConfig() {
+    var body  = document.getElementById('customBody');
+    var arrow = document.getElementById('customArrow');
+    var open  = body.classList.toggle('open');
+    arrow.classList.toggle('open', open);
+    if (open && !document.getElementById('testConfig').value) {
+        document.getElementById('testConfig').value = JSON.stringify(liveConfig, null, 2);
+        validateField('testConfig', 'testConfigStatus');
+    }
+}
+
+function applyTestConfig() {
+    var v = parseAndValidate(document.getElementById('testConfig').value.trim());
+    if (!v.valid) { showBanner('testConfigMsg', 'error', v.error); return; }
+    testConfig          = v.config;
+    useCustomTestConfig = true;
+    showBanner('testConfigMsg', 'success', 'Custom config applied — test queries will use this config');
+    fetchHostsPreview(testConfig, 'testHostsPanel', 'testHostsCode', 'testHostsMeta');
+    fetchPFPreview(testConfig,    'testPFPanel',    'testPFCode',    'testPFMeta');
+}
+
+function resetTestConfig() {
+    testConfig          = liveConfig;
+    useCustomTestConfig = false;
+    document.getElementById('testConfig').value = JSON.stringify(liveConfig, null, 2);
+    validateField('testConfig', 'testConfigStatus');
+    showBanner('testConfigMsg', 'success', 'Reset to live config');
+    document.getElementById('testHostsPanel').style.display = 'none';
+    document.getElementById('testPFPanel').style.display    = 'none';
+}
+
+function loadExampleConfig() {
+    document.getElementById('testConfig').value = JSON.stringify(EXAMPLE_CONFIG, null, 2);
+    validateField('testConfig', 'testConfigStatus');
+    showBanner('testConfigMsg', 'success', 'Example config loaded — click "Use this config" to apply');
+}
+
+async function runTestQuery() {
+    var time   = document.getElementById('testTime').value.trim();
+    var domain = document.getElementById('testDomain').value.trim();
+    if (!time || !domain) { alert('Enter both time and domain'); return; }
+
+    document.getElementById('testSpinner').style.display = 'block';
+    document.getElementById('resultPanel').classList.add('hidden');
+
+    var cfg      = useCustomTestConfig ? testConfig : liveConfig;
+    var formData = new FormData();
+    formData.append('config', JSON.stringify(cfg, null, 2));
+    formData.append('time',   time);
+    formData.append('domain', domain);
+
+    try {
+        var url = '/api/test-query?time=' + encodeURIComponent(time) + '&domain=' + encodeURIComponent(domain);
+        var res = await fetch(url, {
+            method: 'POST',
+            headers: {'X-Auth-Token': authToken},
+            body: formData
+        });
+        displayTestResult(await res.json());
+    } catch(e) {
+        alert('Error: ' + e.message);
+    } finally {
+        document.getElementById('testSpinner').style.display = 'none';
+    }
+}
+
+function displayTestResult(result) {
+    document.getElementById('rTime').textContent    = result.time    || '';
+    document.getElementById('rWeekday').textContent = result.weekday || '';
+    document.getElementById('rDomain').textContent  = result.domain  || '';
+    document.getElementById('rDNS').textContent     = result.dns_response || '';
+    document.getElementById('rError').innerHTML     = '';
+    document.getElementById('rWarning').innerHTML   = '';
+
+    if (result.error) {
+        document.getElementById('rError').innerHTML = '<div class="banner error">' + result.error + '</div>';
+        document.getElementById('resultPanel').classList.remove('hidden');
+        return;
+    }
+
+    var statusEl = document.getElementById('rStatus');
+    statusEl.innerHTML = result.is_blocked
+        ? '<span class="status-blocked">' + result.blocking_status + '</span>'
+        : '<span class="status-allowed">' + result.blocking_status + '</span>';
+
+    var rulesEl = document.getElementById('rRules');
+    if (result.applicable_rules && result.applicable_rules.length > 0) {
+        rulesEl.innerHTML = result.applicable_rules.map(function(rule) {
+            return '<div class="rule-result-item">' +
+                '<div class="rule-result-domain">' + rule.domain + '</div>' +
+                rule.schedules.map(function(s) {
+                    var cls = s.is_active ? 'active-slot' : 'inactive-slot';
+                    return '<div class="slot-result ' + cls + '">' +
+                        (s.is_active ? '✓' : '○') + ' ' + s.weekday + ' ' + s.start + '–' + s.end +
+                        '</div>';
+                }).join('') +
+                '</div>';
+        }).join('');
+    } else {
+        rulesEl.textContent = 'No applicable rules';
+    }
+
+    if (result.has_warning) {
+        document.getElementById('rWarning').innerHTML =
+            '<div class="banner warning">' + result.warning_message + '</div>';
+    }
+
+    document.getElementById('resultPanel').classList.remove('hidden');
+}
+
 // ── Keyboard shortcuts ────────────────────────────────────────────────────────
 document.addEventListener('keypress', function(e) {
     if (e.key === 'Enter' && (e.target.id === 'testTime' || e.target.id === 'testDomain')) {
