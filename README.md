@@ -1,166 +1,179 @@
-# 🚫 Distractions-Free
+# Distractions-Free
 
-A lightweight, system-level background daemon for macOS (and Windows) that enforces productivity schedules by acting as a local DNS proxy. 
+A system-level focus daemon for **macOS** (and Windows). It enforces a productivity schedule by blocking distracting domains at the OS layer, closing browser tabs when a block begins, and warning you 3 minutes before. It runs as a privileged background service that ordinary users cannot disable on a whim.
 
-Unlike browser extensions that can be easily disabled, **Distractions-Free** runs as a root system service, intercepts DNS requests to distracting domains, and seamlessly kills active browser tabs when a focus block begins.
+Unlike browser extensions — one click to disable — Distractions-Free puts the block in the operating system itself: `/etc/hosts`, the local DNS resolver, and (in strict mode) the `pf` firewall. To turn it off you have to type your admin password.
 
-## ✨ Features
-* **Local DNS Blackholing**: Blocks domains instantly at the OS level by returning \`0.0.0.0\`.
-* **Zero-CPU Polling**: Smart 1-minute scheduling that consumes 0% CPU and handles laptop sleep/wake cycles flawlessly.
-* **Intelligent Tab Killer (macOS)**: Native AppleScript integration closes blocked tabs automatically in Chrome and Safari when a schedule triggers.
-* **3-Minute Warnings**: Sends native macOS notifications as the logged-in user right before a block starts.
-* **Embedded Dashboard**: Ships with an embedded web UI and JSON API (no external web assets required).
-* **System Service Integration**: Installs itself automatically as a \`launchd\` daemon on macOS to survive reboots.
+---
 
-### Platform feature support
+## Table of contents
+
+**For users**
+- [What it does](#what-it-does)
+- [How it works](#how-it-works)
+- [Platform support](#platform-support)
+- [Install](#install)
+- [The web dashboard](#the-web-dashboard)
+- [Configuration](#configuration)
+- [Enforcement modes](#enforcement-modes)
+- [Pause & resume](#pause--resume)
+- [Uninstall & cleanup](#uninstall--cleanup)
+- [Command-line reference](#command-line-reference)
+
+**For developers**
+- [Building from source](#building-from-source)
+- [Running tests](#running-tests)
+- [Test utilities](#test-utilities)
+- [Releases](#releases)
+- [Architecture](#architecture)
+
+---
+
+## What it does
+
+- **Blocks distracting domains on a schedule** — per-day, per-time-slot rules per domain. The default mode rewrites `/etc/hosts`, so blocking works across every browser, every app, and every network without any client-side configuration.
+- **Closes browser tabs when a block starts** — native AppleScript closes matching tabs in Chrome and Safari at the moment the block begins (macOS only).
+- **Sends a 3-minute warning** — native macOS notification before a block starts so you can save your work.
+- **Auto-reloads config every minute** — edit the config file, save, and changes take effect on the next minute boundary. No restart needed.
+- **Survives sleep/wake** — the scheduler is tick-based; locking the lid and reopening hours later works correctly.
+- **Bundled web dashboard** — at `http://localhost:8040`, with status, a query-tester, and a PIN-locked management tab. Static assets are embedded in the binary.
+- **Forensic uninstall** — `--clean` removes every system change (hosts entries, pf anchor, DNS overrides, service registration, config dir, temp files) in a single command.
+
+## How it works
+
+A single Go binary runs as a privileged service (`launchd` on macOS, Windows Service on Windows). On every minute boundary the **scheduler** evaluates your rules against the current time and produces the set of domains that should be blocked right now. The **enforcer** — selected by `enforcement_mode` in config — applies that set:
+
+| Mode | Mechanism | Port 53? |
+|---|---|---|
+| `hosts` *(default)* | edits `/etc/hosts` between managed markers | no |
+| `dns` | local DNS proxy on `127.0.0.1:53`, returns `0.0.0.0` for blocked domains | yes |
+| `strict` | DNS proxy + `pf` firewall (macOS) — blocks the resolved IPs at the kernel | yes |
+
+The enforcer is given the *diff* each tick — domains newly blocked and newly unblocked — so changes are O(diff), not O(rules). The same scheduler also fires the 3-minute warning notification and the AppleScript that closes tabs in Chrome and Safari.
+
+Rule-evaluation logic, DNS-response generation, and hosts-file generation are pure functions that take the current time / config / domain list as arguments. That's how the test suite covers the core behaviour without root, without a real port-53 binding, and without modifying the system.
+
+## Platform support
 
 | Feature | macOS | Windows |
 |---|---|---|
-| Hosts-file blocking (default) | ✅ | ✅ |
-| DNS proxy blocking (`"dns"` mode) | ✅ | ✅ |
-| Strict mode — DNS + pf firewall (`"strict"`) | 🔜 planned | ❌ |
-| Automatic browser tab closing | ✅ (Chrome, Safari via AppleScript) | ❌ |
-| Pre-block warning notifications | ✅ (native macOS notifications) | ❌ |
-| System service (auto-start on boot) | ✅ (launchd) | ✅ (Windows Service) |
+| Hosts-file blocking (`hosts` mode, default) | ✅ | ✅ |
+| DNS proxy blocking (`dns` mode) | ✅ | ✅ |
+| `pf` firewall layer (`strict` mode) | ✅ (DNS-only fallback if pf setup fails) | ❌ |
+| Browser tab closing | ✅ Chrome, Safari (AppleScript) | ❌ |
+| 3-minute pre-block notifications | ✅ native notifications | ❌ |
+| System service / auto-start on boot | ✅ launchd | ✅ Windows Service |
+| `--clean` forensic uninstall | ✅ | ✅ |
 
 ---
 
-## ⚡ Quick Download
+## Install
 
-**Don't want to compile?** Download pre-built binaries from the latest [GitHub Release](https://github.com/vsangava/distractions-free/releases):
+### 1. Get the binary
 
-- 🍎 **macOS Apple Silicon** (M1/M2/M3): `distractions-free-macos-arm64`
-- 🪟 **Windows** (x86_64): `distractions-free-windows-amd64.exe`
+**Pre-built (recommended):** download from the latest [GitHub Release](https://github.com/vsangava/distractions-free/releases):
 
-Then skip to **Step 2** in the installation guide below.
+- macOS Apple Silicon: `distractions-free-macos-arm64`
+- macOS Intel: `distractions-free-macos-amd64`
+- Windows x86_64: `distractions-free-windows-amd64.exe`
 
----
+Then `chmod +x distractions-free-macos-*` on macOS.
 
-## 🛠 Prerequisites (For Building from Source)
+**From source:** see [Building from source](#building-from-source).
 
-If you want to compile the binary yourself, you need the Go compiler installed:
-``` bash
-brew install go
-```
+### 2. Install and start the service
 
----
+The service binds privileged resources (writes to `/etc/hosts`, or binds port 53), so installation requires admin rights:
 
-## 🚀 Installation & Setup
-
-### Step 1: Get the Binary
-
-**Option A: Download Pre-built Binary** (Recommended)
-1. Go to [GitHub Releases](https://github.com/vsangava/distractions-free/releases)
-2. Download the binary for your system
-3. Make it executable: `chmod +x distractions-free-macos-*`
-
-**Option B: Build from Source**
-Clone and build:
-``` bash
-git clone https://github.com/vsangava/distractions-free.git
-cd distractions-free
-go build -o distractions-free ./cmd/app
-```
-
-### Step 2: Install the Background Service
-Because this app runs a local DNS server on port 53, it requires Root/Administrator privileges.
-``` bash
+```bash
 sudo ./distractions-free install
-```
-
-### Step 3: Start the Service
-``` bash
 sudo ./distractions-free start
 ```
 
-### Step 4: Point Your OS to the Proxy
-Tell macOS to use your new local DNS proxy instead of your router's default DNS.
-``` bash
-# If using Wi-Fi:
-networksetup -setdnsservers Wi-Fi 127.0.0.1
+In `hosts` mode (the default) that is everything you need to do — no DNS reconfiguration, no extra steps.
 
-# If using Ethernet:
+In `dns` or `strict` mode you also need to point your OS resolver at the local proxy. Most users should not bother:
+
+```bash
+networksetup -setdnsservers Wi-Fi 127.0.0.1
+# or:
 networksetup -setdnsservers Ethernet 127.0.0.1
 ```
 
+### 3. Verify
+
+Open `http://localhost:8040` — the dashboard should load. You should see the seed rule blocking `youtube.com` Mon–Fri 09:00–17:00 (you'll edit this in [Configuration](#configuration)).
+
 ---
 
-## ⚙️ Administration & Configuration
+## The web dashboard
 
-### The Web Dashboard
-Once the service is running, you can access the local dashboard and API via:
-👉 **http://localhost:8040**
+Open **`http://localhost:8040`** while the service is running. The dashboard has three tabs:
 
-The dashboard has three tabs:
+| Tab | What it does |
+|---|---|
+| **Status** | Currently blocked domains, current enforcement mode, paused state, and the next 24 hours of upcoming block/unblock events. |
+| **Test** | Evaluate any `(time, domain)` pair against the live rules — useful when designing schedules. Optionally evaluate against a custom config without touching the live one. |
+| **Manage** | Edit the live config (rules, settings), trigger a pause, and resume. PIN-protected. |
 
-- **Status** — currently blocked domains, enforcement mode, and upcoming block/unblock events for the next 24 hours.
-- **Test** — test whether a domain would be blocked at any given time, optionally with a custom config (changes here don't affect the live service).
-- **Manage** — update the live config and pause/resume blocking. This tab is PIN-protected.
+### Manage-tab PIN
 
-#### Manage tab PIN
+The Manage tab requires a 4-digit PIN before any change is accepted. The PIN is the **current local time as `HHMM`**, in either 24-hour or 12-hour form. It validates client-side and unlocks the tab for the current page session:
 
-The Manage tab requires a 4-digit PIN before any changes can be made. The PIN is the current time formatted as `HHMM`. Both 24-hour and 12-hour formats are accepted:
-
-| Current time | Valid PINs |
+| Local time | Valid PINs |
 |---|---|
 | 2:35 PM | `1435` (24h) or `0235` (12h) |
-| 9:05 AM | `0905` (both formats are the same) |
+| 9:05 AM | `0905` |
 | 9:05 PM | `2105` (24h) or `0905` (12h) |
-| 12:00 noon | `1200` (both formats are the same) |
+| 12:00 noon | `1200` |
 | 12:00 midnight | `0000` (24h) or `1200` (12h) |
 
-The PIN is validated client-side only. It unlocks the Manage tab for the current browser session and resets on page reload.
+The PIN is a friction layer, not a security control. The server-side auth is the **auth token** stored in `config.json` under `settings.auth_token`. The web UI fetches it from the public `GET /api/config` endpoint on first load and sends it in the `X-Auth-Token` header for every other API call. If you don't trust local users on the machine, treat the auth token as a secret — the dashboard listens only on `127.0.0.1`, but anything running locally as your user can read it.
 
-### Enforcement Modes
+---
 
-Distractions-Free supports three enforcement modes, configured via the `enforcement_mode` field in `settings`. If the field is absent the daemon defaults to `"hosts"`.
+## Configuration
 
-| Mode | Value | How it blocks | Requires root |
-|---|---|---|---|
-| **Standard** (default) | `"hosts"` | Edits `/etc/hosts` | Yes (write to hosts file) |
-| **DNS Proxy** | `"dns"` | Local DNS proxy on 127.0.0.1:53 | Yes (port < 1024) |
-| **Strict** | `"strict"` | DNS proxy + pf firewall *(pf is planned; currently DNS-only)* | Yes |
+The daemon reads its configuration from a single JSON file:
 
-**Choosing a mode:**
-- `"hosts"` is the default and works without changing your system DNS settings. It adds entries to `/etc/hosts` inside clearly-marked managed markers and removes them when the block ends. Common subdomains (`www.`, `m.`, `mobile.`, `app.`) are blocked automatically. This is the best choice for most users.
-- `"dns"` is the legacy mode. It runs a local DNS proxy on port 53 and requires you to point your OS DNS at `127.0.0.1`. Use this if you relied on the old behaviour.
-- `"strict"` adds a `pf` firewall layer on top of DNS. Full pf integration is in development; for now it behaves identically to `"dns"`.
+| OS | Path |
+|---|---|
+| macOS (service) | `/Library/Application Support/DistractionsFree/config.json` |
+| Windows (service) | `%PROGRAMDATA%\DistractionsFree\config.json` |
+| Linux | `/etc/distractionsfree/config.json` |
+| Any (`--no-service`) | `./config.json` (working directory) |
 
-To switch to DNS proxy mode, set `"enforcement_mode": "dns"` in config and restart the service. Alternatively, use the `--strict` shorthand:
+The file is generated with sensible defaults on first launch. The scheduler reloads it every minute, so live edits take effect on the next tick — no restart required.
 
-```bash
-sudo ./distractions-free --strict   # sets mode to "strict" in config
-sudo ./distractions-free start      # service picks up the new mode
-```
+### Example
 
-### Modifying the Schedule
-By default, the daemon stores its configuration file at a secure, absolute system path:
-* **macOS:** \`/Library/Application Support/DistractionsFree/config.json\`
-* **Windows:** \`C:\ProgramData\DistractionsFree\config.json\`
-
-To update your rules, simply edit this file. The background daemon will automatically detect and apply the new rules on the next 1-minute tick!
-
-**Example Configuration:**
-``` json
+```json
 {
   "settings": {
     "primary_dns": "8.8.8.8:53",
     "backup_dns": "1.1.1.1:53",
-    "enforcement_mode": "hosts"
+    "enforcement_mode": "hosts",
+    "auth_token": "c911284368ac967797e8af4379b3bcb6"
   },
   "rules": [
+    {
+      "domain": "youtube.com",
+      "is_active": true,
+      "schedules": {
+        "Monday":    [{"start": "09:00", "end": "17:00"}],
+        "Tuesday":   [{"start": "09:00", "end": "17:00"}],
+        "Wednesday": [{"start": "09:00", "end": "17:00"}],
+        "Thursday":  [{"start": "09:00", "end": "17:00"}],
+        "Friday":    [{"start": "09:00", "end": "17:00"}]
+      }
+    },
     {
       "domain": "facebook.com",
       "is_active": true,
       "schedules": {
         "Monday": [
           {"start": "09:00", "end": "11:00"},
-          {"start": "13:00", "end": "15:00"},
-          {"start": "16:00", "end": "17:00"}
-        ],
-        "Wednesday": [
-          {"start": "09:00", "end": "12:00"},
-          {"start": "14:00", "end": "17:00"}
+          {"start": "13:00", "end": "15:00"}
         ]
       }
     }
@@ -168,328 +181,233 @@ To update your rules, simply edit this file. The background daemon will automati
 }
 ```
 
-> **Migrating from a previous version?** Older installs had no `enforcement_mode` field, which means they were using the DNS proxy. After upgrading, the daemon will switch to `"hosts"` mode automatically. If you want to keep the old DNS proxy behaviour, add `"enforcement_mode": "dns"` to your config and also restore your system DNS (which was pointing at `127.0.0.1`):
-> ```bash
-> networksetup -setdnsservers Wi-Fi 127.0.0.1   # macOS — point DNS at the proxy
-> ```
+### Field reference
+
+- **`settings.primary_dns` / `backup_dns`** — upstream resolvers for `dns`/`strict` mode. Ignored in `hosts` mode.
+- **`settings.enforcement_mode`** — `"hosts"` (default), `"dns"`, or `"strict"`. See [Enforcement modes](#enforcement-modes).
+- **`settings.auth_token`** — auto-generated 32-char hex on first launch. The web UI requires this token for every API call except `GET /api/config` (which is intentionally public so the UI can bootstrap the token).
+- **`rules[].domain`** — bare domain (no `www.`). In `hosts` mode the enforcer automatically also blocks the prefixes `www.`, `m.`, `mobile.`, `app.`. Subdomain matching in `dns` mode is suffix-based (`a.b.example.com` is blocked if `example.com` is blocked).
+- **`rules[].is_active`** — set to `false` to suspend a single rule without deleting it.
+- **`rules[].schedules`** — object keyed by weekday name (`"Monday"` … `"Sunday"`). Each value is an array of `{start, end}` slots in `HH:MM` 24-hour format. A domain is blocked when current time falls in `[start, end)`.
+- **`pause`** *(optional)* — `{"until": "<RFC3339 timestamp>"}`. While set, all blocking is suspended. Cleared automatically once `until` passes. Easiest to set via the dashboard or the [`/api/pause`](#http-api) endpoint.
+
+### Editing rules from the command line
+
+You can edit the config file directly with any editor — the daemon picks up changes within 60 seconds. It must be valid JSON; if parsing fails, the daemon logs a warning and keeps using the previous in-memory copy.
 
 ---
 
-## 🛑 Uninstallation & Safety
+## Enforcement modes
 
-**⚠️ CRITICAL:** Do not delete the application without restoring your system DNS settings first, or your internet will stop working!
+The default is `"hosts"`. Most users should leave it that way. Choose another mode only if you have a specific reason.
 
-To safely remove the app, run the built-in uninstall commands. Our daemon is programmed to automatically restore your default macOS Wi-Fi DNS and flush your cache upon shutdown:
-``` bash
-# 1. Stop the service (Automatically restores default OS DNS)
-sudo ./distractions-free stop
+### `hosts` (default)
 
-# 2. Remove the daemon from system startup
-sudo ./distractions-free uninstall
+Edits `/etc/hosts` (macOS/Linux) or `C:\Windows\System32\drivers\etc\hosts` (Windows). Blocked entries live between marker lines (`# distractions-free:begin` / `# distractions-free:end`) and are atomically rewritten via temp file + rename, so a crash mid-write cannot corrupt the file. Other entries are never touched.
 
-# 3. Clean up the configuration folder
+**Pros:** no port binding, works in every browser and every app, survives DNS-server changes, no system DNS reconfiguration.
+
+**Cons:** no wildcards (only the static prefix list), so very deep CDN domains are not covered.
+
+### `dns`
+
+Runs a local DNS proxy on `127.0.0.1:53`. Blocked domains return `0.0.0.0`; everything else is forwarded to `primary_dns` (failover to `backup_dns`). On macOS the daemon also resets system DNS on shutdown.
+
+**Pros:** suffix-matched subdomain blocking (`a.b.example.com` blocked if `example.com` is in the list).
+
+**Cons:** requires you to point your OS DNS at `127.0.0.1`. Apps that hard-code their own DNS resolver (some VPN clients, some browsers in DoH mode) bypass it.
+
+### `strict`
+
+Like `dns`, plus a `pf` (Packet Filter) anchor on macOS that drops outbound packets to the resolved IPs at the kernel level. Each tick, the enforcer resolves blocked domains to A/AAAA addresses and rewrites the pf anchor table. Existing connections to those IPs are killed.
+
+**Pros:** harder to bypass than DNS alone — even apps with their own resolver can't reach the IPs.
+
+**Cons:** macOS only. CDN-heavy domains rotate IPs and only the resolved subset is blocked. If pf setup fails (permissions, edited `pf.conf`), the enforcer logs a warning and degrades to DNS-only.
+
+### Switching modes
+
+Either edit `enforcement_mode` in `config.json` and restart the service, or use the shorthand:
+
+```bash
+sudo ./distractions-free --strict   # writes "strict" to config and exits
+sudo ./distractions-free start      # restart to pick it up
+```
+
+---
+
+## Pause & resume
+
+Need to break the rules — interview, demo, watching a YouTube link a colleague sent? Use the **Manage** tab to pause for up to 4 hours, or hit the API directly:
+
+```bash
+TOKEN=$(curl -s http://localhost:8040/api/config | jq -r '.settings.auth_token')
+
+# Pause for 30 minutes
+curl -X POST http://localhost:8040/api/pause \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"minutes": 30}'
+
+# Resume immediately
+curl -X DELETE http://localhost:8040/api/pause \
+  -H "X-Auth-Token: $TOKEN"
+```
+
+A pause window is persisted in `config.json` as `pause.until`. The scheduler clears it automatically once the timestamp passes, so you don't end up with stale pauses lying around.
+
+---
+
+## Uninstall & cleanup
+
+The recommended path is the all-in-one `--clean` command. It stops the service, removes hosts entries, removes the pf anchor, resets DNS on every interface that was pointing at `127.0.0.1`, flushes the resolver cache, uninstalls the service registration, removes the config directory, deletes temp files, and verifies port 53 is free:
+
+```bash
+sudo ./distractions-free --clean          # interactive: asks before deleting config
+sudo ./distractions-free --clean --yes    # non-interactive: deletes config without asking
+```
+
+If you'd rather drive the steps yourself:
+
+```bash
+sudo ./distractions-free stop        # restores DNS in dns/strict mode; clears hosts entries in hosts mode
+sudo ./distractions-free uninstall   # removes the service registration
 sudo rm -rf "/Library/Application Support/DistractionsFree"
+```
+
+> ⚠️ In `dns`/`strict` mode, do not delete the binary while the service is running with system DNS pointed at `127.0.0.1`, or the machine will lose name resolution. `--clean` handles this correctly; manual removal does not.
 
 ---
 
-## 🧪 Testing
+## Command-line reference
 
-The codebase includes comprehensive unit tests for the core blocking and scheduling logic that run **without requiring privileges, port binding, or system modifications**.
-
-### Run All Tests
-``` bash
-go test ./internal/... -v
+```
+distractions-free <subcommand>           # service management (kardianos/service)
+distractions-free [--flag]               # local / test mode
+sudo distractions-free --clean [--yes]   # forensic uninstall
 ```
 
-### Run Specific Test Suites
+| Command / flag | Privileges | What it does | More |
+|---|---|---|---|
+| `install` | sudo | Register the system service (launchd / Windows Service) | [Install](#install) |
+| `uninstall` | sudo | Remove the service registration | [Uninstall](#uninstall--cleanup) |
+| `start` | sudo | Start the service in the background | [Install](#install) |
+| `stop` | sudo | Stop the service; clears hosts entries / restores DNS as appropriate | [Uninstall](#uninstall--cleanup) |
+| `status` | sudo | Print whether the service is running | — |
+| `run` | sudo | Run as if launched by the service supervisor (foreground) | — |
+| `--no-service` | none | Run the daemon in the foreground using `./config.json` (skips system paths). In `dns`/`strict` mode you still need root to bind port 53. | [Test utilities](#test-utilities) |
+| `--strict` | sudo | Set `enforcement_mode` to `"strict"` in config and exit. Restart the service to apply. | [Switching modes](#switching-modes) |
+| `--clean [--yes]` | sudo | Forensic recovery: undo every system change. Use this before deleting the binary. | [Uninstall](#uninstall--cleanup) |
+| `--test-query "<YYYY-MM-DD HH:MM>" <domain>` | none | Print whether a domain would be blocked at a specific time, with the matching rules. Uses `./config.json`. | [Test utilities](#test-utilities) |
+| `--test-web` | none | Start the web dashboard standalone for testing schedules without installing the service. Uses `./config.json`. | [Test utilities](#test-utilities) |
+| `--test-applescript` | none | Generate the AppleScript that closes Chrome/Safari tabs and optionally execute it. macOS only. | [Test utilities](#test-utilities) |
 
-**Scheduler Tests** (time-based blocking rules evaluation):
-``` bash
-go test ./internal/scheduler -v
-```
-- Tests rule evaluation at specific times
-- Validates blocking windows (start/end times)
-- Tests warning triggers (3-minute pre-block notifications)
-- Tests all weekday schedules and edge cases
+### HTTP API
 
-**DNS Proxy Tests** (DNS request handling and forwarding):
-``` bash
-go test ./internal/proxy -v
-```
-- Tests blocked domain responses (returns `0.0.0.0`)
-- Tests allowed domain forwarding to **real upstream DNS servers** (Google 8.8.8.8, Cloudflare 1.1.1.1)
-- Tests DNS failover (primary → backup DNS)
-- Tests various DNS record types (A, AAAA, MX, CNAME)
-- Tests DNS reply formatting and TTL
+All endpoints listen on `127.0.0.1:8040`. Every endpoint except the first requires `X-Auth-Token: <auth_token>` (read it from `GET /api/config`).
 
-### Test Coverage
-**17 Scheduler Tests:**
-- Blocking logic during/outside schedules
-- Multiple domains and time slots
-- All 7 weekdays
-- Warning notification timing
-- Edge cases (exact start/end times)
-
-**16 DNS Proxy Tests:**
-- Domain blocking and forwarding
-- Upstream DNS queries
-- Failover behavior
-- Record type handling
-- TTL and reply flag validation
-
-### Why These Tests Work Without Privileges
-- ✅ **Testable pure functions**: Core logic extracted to accept time/config as parameters
-- ✅ **Real upstream DNS**: Tests query actual DNS servers to verify forwarding works
-- ✅ **No port binding**: DNS logic tested without binding to port 53
-- ✅ **No system modifications**: No DNS cache flushing or system DNS changes
-- ✅ **No mocking**: Tests use real DNS responses for authenticity
-
-### What's NOT Tested (Requires Privileges)
-These features require root/admin and service installation, so they're validated manually:
-- ❌ Port 53 binding
-- ❌ System DNS cache flushing
-- ❌ Browser tab closing
-- ❌ Service installation/management
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/api/config` | GET | Current config (public — used to bootstrap the token in the UI) |
+| `/api/config/update` | POST | Replace the rules / settings; validated server-side |
+| `/api/status` | GET / POST | Current blocked domains, last evaluation, paused state |
+| `/api/test-query?time=&domain=` | GET / POST | Evaluate `(time, domain)`; POST a `config` form field to test against a custom config |
+| `/api/hosts-preview` | GET / POST | Show the `/etc/hosts` lines that would be written for the currently blocked set |
+| `/api/pf-preview` | GET / POST | Show the resolved IPs and `pf` anchor content (strict mode only) |
+| `/api/pause` | POST | Body `{"minutes": N}` (1–240) |
+| `/api/pause` | DELETE | Resume immediately |
 
 ---
 
-## 🧪 Interactive Testing with --test-query
+# For developers
 
-Test whether specific domains would be blocked at any given time **without installing the service or requiring privileges**.
+## Building from source
 
-### Quick Test
-Check if a domain is blocked at a specific time:
-``` bash
+Requires Go 1.21+ (the release pipeline uses 1.26.2).
+
+```bash
+git clone https://github.com/vsangava/distractions-free.git
+cd distractions-free
+
+make build         # current OS only
+make build-all     # macOS arm64 + amd64 + Windows amd64
+```
+
+`make help` lists every target. The full list:
+
+| Target | What it does |
+|---|---|
+| `make build` | Build for current OS into `./distractions-free` |
+| `make build-all` | Cross-compile macOS arm64, macOS amd64, and Windows amd64 |
+| `make test` | `go test ./...` |
+| `make release` | `test` + `build-all` + `verify-binaries` (pre-release sanity check) |
+| `make clean` | Remove built binaries |
+
+## Running tests
+
+```bash
+go test ./...                       # everything
+go test ./internal/scheduler -v     # rule evaluation
+go test ./internal/proxy -v         # DNS response generation
+go test ./internal/enforcer -v      # hosts/dns/strict enforcer logic
+go test ./internal/web -v           # HTTP handlers
+```
+
+The whole suite runs without root, without binding port 53, and without modifying any system file. Core logic is implemented as pure functions (`scheduler.EvaluateRulesAtTime`, `proxy.GetDNSResponse`, `enforcer.GenerateHostsEntries`, `pf.GenerateAnchorContent`) so tests pass `time.Time`, `config.Config`, and domain lists in directly.
+
+The DNS-response tests query real upstream resolvers (`8.8.8.8`, `1.1.1.1`) to verify forwarding and failover, so you'll need internet access for `./internal/proxy`.
+
+What the test suite does **not** cover (these are validated by hand because they need root and a live macOS environment):
+
+- Port 53 binding
+- System DNS reconfiguration (`networksetup`)
+- `pf` rule loading
+- AppleScript tab-closing in Chrome/Safari
+- Service registration in launchd / Windows Service Manager
+
+## Test utilities
+
+Three flags let you exercise the daemon without installing it:
+
+### `--test-query "<time>" <domain>`
+
+```bash
 ./distractions-free --test-query "2024-04-01 10:30" youtube.com
 ```
 
-### Output Example
-```
-============================================================
-Test Query Result
-============================================================
-Time:          2024-04-01 10:30 (Monday)
-Domain:        youtube.com
-------------------------------------------------------------
-Status:        🚫 BLOCKED
-Response:      0.0.0.0 (blocking response)
-------------------------------------------------------------
-Applicable Rules:
-  Domain: youtube.com
-    ✓ Blocked on Monday from 09:00 to 17:00 (ACTIVE)
-------------------------------------------------------------
-============================================================
-```
+Prints whether the domain would be blocked at that moment, the matching rule(s), and whether a 3-minute warning would fire. Uses `./config.json`. Time format: `YYYY-MM-DD HH:MM` (24-hour).
 
-### Time Format
-Use **`2006-01-02 15:04`** format (YYYY-MM-DD HH:MM in 24-hour time):
-- Example: `2024-04-01 10:30` = Monday, April 1, 2024 at 10:30 AM
-- Example: `2024-04-01 09:00` = Monday, April 1, 2024 at 9:00 AM (start of block)
+### `--test-web`
 
-### Test Cases
-
-**Check if a domain is allowed:**
-``` bash
-./distractions-free --test-query "2024-04-06 10:30" youtube.com
-```
-Output: `✓ ALLOWED (forwarded to upstream DNS)` with DNS response
-
-**Test warning trigger (3 minutes before block):**
-``` bash
-./distractions-free --test-query "2024-04-01 08:57" youtube.com
-```
-Output: Shows `⚠️ Warning will trigger 3 minutes before block!`
-
-**Multi-slot schedule tests:**
-``` bash
-./distractions-free --test-query "2024-04-01 10:30" facebook.com   # Monday first block
-./distractions-free --test-query "2024-04-01 12:30" facebook.com   # Monday gap between blocks
-./distractions-free --test-query "2024-04-01 14:30" facebook.com   # Monday second block
-./distractions-free --test-query "2024-04-01 17:45" linkedin.com   # Monday evening block
-./distractions-free --test-query "2024-04-02 12:30" linkedin.com   # Tuesday midday block
-```
-
-**Test different domains and times:**
-``` bash
-./distractions-free --test-query "2024-04-01 17:00" facebook.com  # After block ends
-./distractions-free --test-query "2024-04-02 10:30" linkedin.com  # Tuesday schedule
-```
-
-### Why This Feature is Useful
-- ✅ **Verify your rules**: Confirm blocking schedules work as expected
-- ✅ **No system impact**: Uses local config file, no service needed
-- ✅ **Real DNS queries**: Shows actual upstream DNS responses
-- ✅ **Debug schedules**: Check if a specific time/domain/day combination triggers blocking
-- ⚠️ **Root still required**: `--no-service` avoids service installation but still binds port 53, which requires root on all Unix systems. Use `sudo` even in this mode.
-
-
----
-
-## 🌐 Web UI Test Mode (`}--test-web`)
-
-A beautiful, interactive web interface for testing DNS blocking queries in your browser.
-
-### Launch the Test UI
 ```bash
 ./distractions-free --test-web
+# open http://localhost:8040
 ```
-Then open your browser to **http://localhost:8040**
 
-### Features
-- **Beautiful gradient UI**: Modern purple gradient design with responsive layout
-- **Time input**: Pick any date/time in format `YYYY-MM-DD HH:MM`
-- **Domain input**: Enter the domain to test (with example placeholder)
-- **Live config viewer**: See the current config in read-only JSON format
-- **Real-time results**: Displays:
-  - Weekday (calculated from the date)
-  - Blocking status with emoji (🚫 BLOCKED or ✓ ALLOWED)
-  - Actual DNS response (real IPs from upstream DNS)
-  - Applicable rules with schedule details
-  - Warning notifications (3-minute pre-block alerts)
-- **Color-coded display**: 
-  - Red for blocked status
-  - Green for allowed status
-  - Yellow warnings for pre-block notifications
-- **Loading animation**: Spinner while query executes
+Runs the full dashboard against `./config.json` without installing the service. The Manage tab can edit the local config; nothing system-level is touched. The hosts-preview and pf-preview endpoints are particularly useful here — they show exactly what *would* be written to `/etc/hosts` or loaded into pf, without root.
 
-### Web UI Screenshots
-When testing YouTube on Monday at 10:30 (blocked):
-- Status shows: 🚫 **BLOCKED**
-- DNS Response: `0.0.0.0 (blocking response)`
-- Applicable Rules: "✓ ACTIVE: Monday 09:00-17:00"
+### `--test-applescript`
 
-When testing Google on Saturday at 10:30 (allowed):
-- Status shows: ✓ **ALLOWED (forwarded to upstream DNS)**
-- DNS Response: `google.com. 287 IN A 142.251.215.110`
-- Applicable Rules: "No rules apply"
-
-### Why Use the Web UI Instead of CLI
-- 🎨 **Visual**: See results in a beautiful, easy-to-read format
-- 🔄 **Fast iterations**: Quickly test multiple times/domains without typing commands
-- 📋 **Config viewer**: See your rules configuration side-by-side with results
-- 🌟 **Better UX**: Emoji status indicators, color coding, and smooth animations
-- ⌨️ **Press Enter to submit**: Type time/domain and hit Enter to test
-
-### Example Usage
-1. Launch: `./distractions-free --test-web`
-2. Browser opens to http://localhost:8040
-3. Time field pre-filled with current time
-4. Enter domain: `youtube.com`
-5. Click "Test Query" or press Enter
-6. Instantly see if it's blocked with rule details
-7. Modify time to test different schedules
-8. See DNS responses from real upstream servers
-
----
-
-## 🖥️ AppleScript Test Mode (`--test-applescript`)
-
-Test the macOS AppleScript integration for warning notifications and tab closing **without requiring privileges or service installation**.
-
-### Quick Test
-Run the AppleScript test to verify GUI interactions:
-``` bash
+```bash
 ./distractions-free --test-applescript
 ```
 
-### What It Does
-- **Scans Browser Tabs**: Checks Chrome and Safari for open tabs matching test domains
-- **Conditional Warnings**: Shows native macOS alert only for domains that have open tabs
-- **Closes Tabs**: Automatically closes tabs for facebook.com after a brief delay
-- **Interactive Confirmation**: Asks for user confirmation before executing scripts
+Generates the AppleScript used by the tab-closer and optionally executes it. macOS only. Test domains: `facebook.com` (close), `reddit.com` and `roblox.com` (warning — only fires if a tab is open).
 
-### Test Domains
-- **Warning Domains**: reddit.com, roblox.com (alert shown only if tabs are open)
-- **Close Domains**: facebook.com (tabs closed regardless of open status)
+## Releases
 
-### Output Example
-```
-=== CLOSE TABS SCRIPT (facebook.com) ===
-tell application "Google Chrome"
-    repeat with w in windows
-        set tabList to tabs of w whose URL contains "facebook.com"
-        repeat with t in tabList
-            close t
-        end repeat
-    end repeat
-end tell
-tell application "Safari"
-    repeat with w in windows
-        set tabList to tabs of w whose URL contains "facebook.com"
-        repeat with t in tabList
-            close t
-        end repeat
-    end repeat
-end tell
-
-Execute scripts? (y/N): y
-Executing warning script...
-Sleeping 2 seconds before close tabs script...
-Executing close tabs script...
-```
-
-### Why This Feature is Useful
-- ✅ **Verify AppleScript**: Test that macOS GUI interactions work correctly
-- ✅ **No system impact**: Uses test domains and requires user confirmation
-- ✅ **Debug notifications**: Ensure alerts display properly in user context
-- ✅ **Test tab closing**: Validate browser automation works across Chrome/Safari
-- ✅ **Service compatibility**: Confirms scripts work in both interactive and service modes
-
----
-
-## 📦 Release Process (For Maintainers)
-
-### How Releases Work
-
-This project uses **GitHub Actions** to automatically build and release binaries whenever a new version tag is pushed.
-
-### Making a Release
-
-1. **Create a version tag** (semantic versioning):
-   ```bash
-   git tag v1.0.0
-   git push origin v1.0.0
-   ```
-
-2. **Automatic Build Process**:
-   - GitHub Actions workflow triggers automatically
-   - Builds binaries for macOS ARM64 and Windows (x86_64)
-   - Runs full test suite on each platform
-   - Uploads binaries to the release
-
-3. **Release is Created**:
-   - Visit [Releases page](https://github.com/vsangava/distractions-free/releases)
-   - Add release notes describing changes
-   - Users can now download binaries
-
-### Workflow Details
-
-The `.github/workflows/release.yml` file:
-- **Triggers on**: Git tags matching `v*` (e.g., `v1.0.0`)
-- **Builds for**:
-  - macOS ARM64 (Apple Silicon: M1/M2/M3)
-  - Windows x86_64
-- **Tests**: Runs `go test ./...` on each platform before release
-- **Uploads**: Uses GitHub's release artifacts API
-
-### Example Release Workflow
+Tagged commits matching `v*` trigger the GitHub Actions workflow at `.github/workflows/release.yml`:
 
 ```bash
-# Make final commits and tag version
-git tag v1.0.0
-git push origin v1.0.0
-
-# → GitHub Actions automatically:
-#   1. Builds 3 binaries
-#   2. Runs all tests
-#   3. Creates release with binaries attached
-#   4. Available at https://github.com/vsangava/distractions-free/releases/tag/v1.0.0
+make release          # local sanity check: tests + build-all
+git tag v1.2.3
+git push origin v1.2.3
 ```
 
-### Next Steps for Production
+The workflow builds for `darwin/arm64` and `windows/amd64`, runs `go test ./...` on each, and attaches the binaries to the release. macOS Intel (`darwin/amd64`) is built locally by `make build-all` but is **not** part of the release matrix at the moment — add a row to `.github/workflows/release.yml` if you need it on the release page.
 
-When ready for wider distribution:
-- [ ] Add code signing for macOS (required for newer macOS versions)
-- [ ] Create Homebrew formula for `brew install distractions-free`
-- [ ] Create Scoop manifest for Windows package manager
-- [ ] Consider Windows installer (.msi) using WiX or NSIS
+The release matrix uses Go 1.26.2 with `CGO_ENABLED=0` so the resulting binaries are statically linked.
+
+## Architecture
+
+For a deep dive into modules, data flow, and the enforcer abstraction, see [DESIGN.md](./DESIGN.md). For diagnostic and recovery procedures, see [TROUBLESHOOTING.md](./TROUBLESHOOTING.md).
