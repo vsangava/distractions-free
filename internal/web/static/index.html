@@ -605,7 +605,212 @@
     </div>
 </div>
 <script>
-// JS added in subsequent commits
+// ── State ─────────────────────────────────────────────────────────────────────
+var liveConfig         = null;   // config from server
+var testConfig         = null;   // config used for test queries
+var useCustomTestConfig = false;
+var authToken          = '';
+var manageUnlocked     = false;
+
+var WEEKDAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+
+var EXAMPLE_CONFIG = {
+    "settings": {"primary_dns": "8.8.8.8:53", "backup_dns": "1.1.1.1:53", "enforcement_mode": "hosts"},
+    "rules": [
+        {"domain": "youtube.com", "is_active": true, "schedules": {
+            "Monday":    [{"start":"09:00","end":"17:00"}],
+            "Tuesday":   [{"start":"09:00","end":"17:00"}],
+            "Wednesday": [{"start":"09:00","end":"17:00"}],
+            "Thursday":  [{"start":"09:00","end":"17:00"}],
+            "Friday":    [{"start":"09:00","end":"17:00"}]
+        }},
+        {"domain": "instagram.com", "is_active": true, "schedules": {
+            "Monday":    [{"start":"09:00","end":"11:00"},{"start":"13:00","end":"17:00"}],
+            "Tuesday":   [{"start":"09:00","end":"17:00"}],
+            "Wednesday": [{"start":"09:00","end":"17:00"}],
+            "Thursday":  [{"start":"09:00","end":"17:00"}],
+            "Friday":    [{"start":"09:00","end":"15:00"}]
+        }},
+        {"domain": "reddit.com", "is_active": true, "schedules": {
+            "Monday":  [{"start":"09:00","end":"17:00"}],
+            "Tuesday": [{"start":"09:00","end":"17:00"}],
+            "Thursday":[{"start":"09:00","end":"17:00"}]
+        }},
+        {"domain": "twitter.com", "is_active": false, "schedules": {
+            "Saturday": [{"start":"10:00","end":"20:00"}],
+            "Sunday":   [{"start":"10:00","end":"20:00"}]
+        }}
+    ]
+};
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+window.onload = function() {
+    setupPinBoxes();
+    setDefaultTestTime();
+    loadConfig().then(function() { loadStatus(); });
+};
+
+async function loadConfig() {
+    try {
+        var res = await fetch('/api/config');
+        var cfg = await res.json();
+        if (cfg.settings && cfg.settings.auth_token) {
+            authToken = cfg.settings.auth_token;
+        }
+        liveConfig = cfg;
+        testConfig = cfg;
+        document.getElementById('testConfig').value = JSON.stringify(cfg, null, 2);
+        document.getElementById('manageConfig').value = JSON.stringify(cfg, null, 2);
+        validateField('testConfig',   'testConfigStatus');
+        validateField('manageConfig', 'manageConfigStatus');
+    } catch (e) {
+        liveConfig = EXAMPLE_CONFIG;
+        testConfig = EXAMPLE_CONFIG;
+    }
+}
+
+// ── Tab switching ─────────────────────────────────────────────────────────────
+function switchTab(tab) {
+    ['status','test','manage'].forEach(function(t) {
+        document.getElementById(t + 'Tab').classList.remove('active');
+    });
+    document.querySelectorAll('.tab-button').forEach(function(b) {
+        b.classList.remove('active');
+    });
+    document.getElementById(tab + 'Tab').classList.add('active');
+    var idx = {status: 0, test: 1, manage: 2}[tab];
+    document.querySelectorAll('.tab-button')[idx].classList.add('active');
+
+    if (tab === 'status') { loadStatus(); }
+    if (tab === 'manage' && !manageUnlocked) {
+        setTimeout(function() {
+            var first = document.querySelectorAll('.pin-box')[0];
+            if (first) first.focus();
+        }, 80);
+    }
+}
+
+// ── Shared: config validation ─────────────────────────────────────────────────
+var VALID_DAYS = {Monday:1,Tuesday:1,Wednesday:1,Thursday:1,Friday:1,Saturday:1,Sunday:1};
+
+function parseAndValidate(text) {
+    if (!text) return {valid: false, error: 'Config is empty'};
+    var parsed;
+    try { parsed = JSON.parse(text); } catch(e) { return {valid: false, error: 'Invalid JSON: ' + e.message}; }
+    if (!parsed || typeof parsed !== 'object') return {valid: false, error: 'Config must be an object'};
+    if (!Array.isArray(parsed.rules))           return {valid: false, error: 'Config must have a rules array'};
+    for (var i = 0; i < parsed.rules.length; i++) {
+        var rule = parsed.rules[i];
+        if (!rule.domain) return {valid: false, error: 'Each rule must have a domain'};
+        if (typeof rule.is_active !== 'boolean') return {valid: false, error: rule.domain + ': is_active must be boolean'};
+        if (!rule.schedules || typeof rule.schedules !== 'object') return {valid: false, error: rule.domain + ': missing schedules'};
+        var days = Object.keys(rule.schedules);
+        for (var j = 0; j < days.length; j++) {
+            var day = days[j];
+            if (!VALID_DAYS[day]) return {valid: false, error: 'Invalid day: ' + day};
+            var slots = rule.schedules[day];
+            if (!Array.isArray(slots) || slots.length === 0) return {valid: false, error: rule.domain + '/' + day + ': needs at least one slot'};
+            for (var k = 0; k < slots.length; k++) {
+                var s = slots[k];
+                if (!s.start || !s.end) return {valid: false, error: rule.domain + '/' + day + ': slots need start and end'};
+                if (s.start >= s.end)   return {valid: false, error: rule.domain + '/' + day + ': start must be before end'};
+            }
+        }
+    }
+    return {valid: true, config: parsed};
+}
+
+function validateField(fieldId, statusId) {
+    var text = document.getElementById(fieldId).value.trim();
+    var el   = document.getElementById(statusId);
+    var v    = parseAndValidate(text);
+    if (v.valid) {
+        el.textContent = '✓ Valid';
+        el.className   = 'config-status valid';
+    } else {
+        el.textContent = '✗ ' + v.error;
+        el.className   = 'config-status invalid';
+    }
+    return v.valid;
+}
+
+function showBanner(targetId, type, msg) {
+    var el = document.getElementById(targetId);
+    el.innerHTML = '<div class="banner ' + type + '">' + msg + '</div>';
+}
+
+// ── Shared: preview fetches ───────────────────────────────────────────────────
+async function fetchHostsPreview(cfg, panelId, codeId, metaId) {
+    var panel = document.getElementById(panelId);
+    try {
+        var res = await fetch('/api/hosts-preview', {
+            method: 'POST',
+            headers: {'X-Auth-Token': authToken, 'Content-Type': 'application/json'},
+            body: JSON.stringify(cfg)
+        });
+        if (!res.ok) { panel.style.display = 'none'; return; }
+        var data = await res.json();
+        if (data.enforcement_mode !== 'hosts') { panel.style.display = 'none'; return; }
+        panel.style.display = 'block';
+        document.getElementById(metaId).textContent = 'evaluated at ' + new Date(data.evaluated_at).toLocaleTimeString();
+        var entries = data.hosts_entries || [];
+        if (entries.length === 0) {
+            document.getElementById(codeId).textContent = '# No domains in a block window right now.\n# /etc/hosts would have no managed entries.';
+        } else {
+            var lines = ['# distractions-free:begin'].concat(entries).concat(['# distractions-free:end', '',
+                '# ' + (data.blocked_domains||[]).length + ' domain(s) blocked · ' + entries.length + ' host entries']);
+            document.getElementById(codeId).textContent = lines.join('\n');
+        }
+    } catch(e) { panel.style.display = 'none'; }
+}
+
+async function fetchPFPreview(cfg, panelId, codeId, metaId) {
+    var panel = document.getElementById(panelId);
+    var mode  = cfg && cfg.settings && cfg.settings.enforcement_mode;
+    if (mode !== 'strict') { panel.style.display = 'none'; return; }
+    try {
+        var res = await fetch('/api/pf-preview', {
+            method: 'POST',
+            headers: {'X-Auth-Token': authToken, 'Content-Type': 'application/json'},
+            body: JSON.stringify(cfg)
+        });
+        if (!res.ok) { panel.style.display = 'none'; return; }
+        var data = await res.json();
+        if (data.error) { panel.style.display = 'none'; return; }
+        panel.style.display = 'block';
+        var domains = data.domains || [];
+        document.getElementById(metaId).textContent = domains.length + ' domain(s)';
+        if (domains.length === 0) {
+            document.getElementById(codeId).textContent = '# No domains in a block window right now.';
+        } else {
+            var resolved = data.resolved_ips || {};
+            var ipLines  = domains.map(function(d) { return '# ' + d + ' → ' + ((resolved[d]||[]).join(', ') || 'no IPs resolved'); });
+            document.getElementById(codeId).textContent = ipLines.join('\n') + '\n\n' + (data.anchor_content || '');
+        }
+    } catch(e) { panel.style.display = 'none'; }
+}
+
+// ── Keyboard shortcuts ────────────────────────────────────────────────────────
+document.addEventListener('keypress', function(e) {
+    if (e.key === 'Enter' && (e.target.id === 'testTime' || e.target.id === 'testDomain')) {
+        runTestQuery();
+    }
+});
+
+// live validation listeners wired after DOM ready
+document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('testConfig').addEventListener('input', function() {
+        validateField('testConfig', 'testConfigStatus');
+    });
+    document.getElementById('manageConfig').addEventListener('input', function() {
+        validateField('manageConfig', 'manageConfigStatus');
+        var v = parseAndValidate(document.getElementById('manageConfig').value);
+        if (v.valid) {
+            fetchHostsPreview(v.config, 'manageHostsPanel', 'manageHostsCode', 'manageHostsMeta');
+            fetchPFPreview(v.config,    'managePFPanel',    'managePFCode',    'managePFMeta');
+        }
+    });
+});
 </script>
 </body>
 </html>
