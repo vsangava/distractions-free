@@ -1,1489 +1,712 @@
-# Distractions-Free: System Design Document
+# Distractions-Free — System Design
 
-## Table of Contents
-1. [Overview](#overview)
-2. [Architecture](#architecture)
-3. [Core Modules](#core-modules)
-4. [Data Flow](#data-flow)
-5. [Service Operation](#service-operation)
-6. [Privileged Operations](#privileged-operations)
-7. [Testing Architecture](#testing-architecture)
-8. [Configuration](#configuration)
-9. [Mode of Operation](#mode-of-operation)
+This document describes how the daemon is built. It complements [README.md](./README.md), which is the user-facing guide, and [TROUBLESHOOTING.md](./TROUBLESHOOTING.md), which covers diagnostics and recovery.
 
----
+## Contents
 
-## Overview
-
-**Distractions-Free** is a system-level DNS proxy that enforces productivity schedules by intercepting DNS requests. Instead of allowing users to bypass time-blocking with browser extensions, this application runs as a background service with privileged access, making it impossible to disable without root password.
-
-### Key Characteristics
-- **System-level enforcement**: Runs as a service (macOS `launchd`, Windows `Service`)
-- **Zero-trust design**: Works even if applications try to bypass the OS DNS
-- **Real-time scheduling**: Evaluates rules every minute to handle laptop sleep/wake
-- **Multi-layer testing**: Comprehensive unit tests without requiring privileges or port binding
-- **Interactive testing**: CLI and web UI for testing blocking logic without service installation
-
-### Technology Stack
-- **Language**: Go 1.x
-- **DNS Library**: github.com/miekg/dns
-- **Service Framework**: github.com/kardianos/service
-- **Port**: 127.0.0.1:53 (requires root/admin)
-- **Web Server**: net/http (embedded, no external dependencies)
+1. [Overview](#1-overview)
+2. [System architecture](#2-system-architecture)
+3. [Module layout](#3-module-layout)
+4. [The enforcer abstraction](#4-the-enforcer-abstraction)
+5. [Scheduler](#5-scheduler)
+6. [DNS proxy](#6-dns-proxy)
+7. [pf (Packet Filter) integration](#7-pf-packet-filter-integration)
+8. [Configuration](#8-configuration)
+9. [Web server & HTTP API](#9-web-server--http-api)
+10. [Process lifecycle](#10-process-lifecycle)
+11. [Cleanup (`--clean`)](#11-cleanup---clean)
+12. [Testability strategy](#12-testability-strategy)
+13. [Concurrency model](#13-concurrency-model)
+14. [Security model](#14-security-model)
+15. [Platform-specific notes](#15-platform-specific-notes)
 
 ---
 
-## Architecture
+## 1. Overview
 
-### System-Level Components Diagram
+Distractions-Free is a single-binary Go daemon that runs as a privileged system service. It enforces per-domain, per-time-of-day blocking rules on the host so that distracting sites become unreachable during configured windows.
+
+The interesting design decisions:
+
+- **Three interchangeable enforcement backends.** Blocking can be done by editing `/etc/hosts` (default), by running a local DNS proxy on `127.0.0.1:53`, or by combining the DNS proxy with a `pf` packet-filter anchor on macOS. The scheduler does not know which is in use; it talks to an `Enforcer` interface.
+- **Pure functions for the parts worth testing.** Rule evaluation, DNS-response building, hosts-line generation, and pf-anchor generation are pure functions of `(time, config, …)` with no side effects. This means the test suite covers the core behaviour without needing root, port 53, or system-file access.
+- **Diff-based activation.** The scheduler runs once a minute and computes the diff against the previous tick. The enforcer is given only `newlyBlocked` and `newlyUnblocked` lists, not the full set, so a steady-state minute is a no-op.
+- **Auto-reloading config.** Every tick reloads `config.json` from disk. There is no inotify/FSEvents listener — the 60-second window is the maximum staleness, and is good enough for human-edited rules.
+- **Dashboard embedded in the binary.** Static HTML/CSS/JS is bundled via `go:embed`, so a single binary is the entire deliverable.
+
+### Tech stack
+
+- **Language:** Go (cross-compiles to `darwin/arm64`, `darwin/amd64`, `windows/amd64`).
+- **DNS:** [`github.com/miekg/dns`](https://github.com/miekg/dns).
+- **Service framework:** [`github.com/kardianos/service`](https://github.com/kardianos/service) — abstracts launchd / Windows Service Manager.
+- **Web:** `net/http` only.
+- **External binaries called:** `osascript`, `networksetup`, `dscacheutil`, `killall`, `pfctl` (macOS); `ipconfig`, `powershell` (Windows).
+
+---
+
+## 2. System architecture
+
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                      Operating System                            │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │  System DNS: 127.0.0.1:53 (configured via networksetup)│    │
-│  └────────────────────────┬────────────────────────────────┘    │
-│                           │                                      │
-│                           ▼                                      │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │      Distractions-Free Service (running as root)        │    │
-│  │                                                         │    │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐ │    │
-│  │  │  Scheduler   │  │   Config     │  │  Web Server  │ │    │
-│  │  │  (1-min)     │  │  (Config.json)│ │ (8040)      │ │    │
-│  │  └──────────────┘  └──────────────┘  └──────────────┘ │    │
-│  │                           ▲                                   │
-│  │                           │                                   │
-│  │              ┌────────────┴────────────┐                     │
-│  │              ▼                         ▼                     │
-│  │   ┌──────────────────┐      ┌──────────────────┐             │
-│  │   │  DNS Proxy       │      │  Active Blocks   │             │
-│  │   │  (Port 53)       │      │  (Map)           │             │
-│  │   └──────────────────┘      └──────────────────┘             │
-│  │              │                                               │
-│  │              ▼                                               │
-│  │   ┌──────────────────┐      ┌──────────────────┐             │
-│  │   │  Upstream DNS    │      │  Tab Closer      │             │
-│  │   │  (8.8.8.8:53)    │      │  (AppleScript)   │             │
-│  │   └──────────────────┘      └──────────────────┘             │
-│  │                                                              │
-│  └──────────────────────────────────────────────────────────────┘
-│                                                                   │
-└─────────────────────────────────────────────────────────────────┘
+                                 ┌─────────────────────────────┐
+                                 │  config.json (auto-reloaded │
+                                 │  every minute from disk)    │
+                                 └──────────────┬──────────────┘
+                                                │
+                                                ▼
+   ┌─────────────────────────────────────────────────────────────────┐
+   │                       Scheduler (1-min tick)                     │
+   │  • Loads config                                                  │
+   │  • Calls EvaluateRulesAtTime(now, cfg) → set of blocked domains  │
+   │  • Diffs against previous tick → newlyBlocked, newlyUnblocked    │
+   │  • Calls enforcer.Activate / .Deactivate with the diffs          │
+   │  • Calls CheckWarningDomainsAtTime — fires AppleScript notification
+   │  • On block start, fires AppleScript to close Chrome/Safari tabs │
+   └──────────────────────────┬──────────────────────────────────────┘
+                              │
+                              ▼
+            ┌───────────────────────────────────────┐
+            │    enforcer.Enforcer (interface)      │
+            │       Setup / Teardown                │
+            │       Activate / Deactivate / All     │
+            └───┬───────────────┬──────────────┬────┘
+                │               │              │
+        ┌───────▼─────┐  ┌──────▼──────┐  ┌────▼─────────┐
+        │ HostsEnforce│  │ DNSEnforcer │  │ StrictEnforce│
+        │  edits      │  │  updates    │  │  composes    │
+        │  /etc/hosts │  │  blocked    │  │  DNS + pf    │
+        │             │  │  map →      │  │              │
+        │             │  │  proxy pkg  │  │              │
+        └─────────────┘  └──────┬──────┘  └──┬───────┬───┘
+                                │            │       │
+                                ▼            ▼       ▼
+                       ┌──────────────┐  ┌─────────────┐
+                       │  proxy.DNS   │  │  pf anchor  │
+                       │  Server      │  │  /etc/pf.   │
+                       │  127.0.0.1:53│  │  anchors/   │
+                       └──────────────┘  └─────────────┘
 
-  Application Requests
-        │
-        ▼
-  What IP is youtube.com?
-        │
-        ▼
-  ┌─────────────────────────────────────────┐
-  │  Is youtube.com in blocked domains?      │
-  │  (Check current time and rules)          │
-  └─────────────────────────────────────────┘
-        │
-        ├─ YES ──► Return 0.0.0.0 (BLOCKED)
-        │
-        └─ NO  ──► Forward to upstream DNS
-                   (Google 8.8.8.8 or Cloudflare)
+   ┌─────────────────────────────────────────────────────────────────┐
+   │              Web server on 127.0.0.1:8040                       │
+   │  • GET  /api/config            (public — bootstraps auth token) │
+   │  • POST /api/config/update     (auth)                           │
+   │  • GET/POST /api/status        (auth)                           │
+   │  • GET/POST /api/test-query    (auth)                           │
+   │  • GET/POST /api/hosts-preview (auth)                           │
+   │  • GET/POST /api/pf-preview    (auth)                           │
+   │  • POST /api/pause             (auth)                           │
+   │  • DELETE /api/pause           (auth)                           │
+   │  • Embedded static dashboard (Status / Test / Manage tabs)      │
+   └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Module Dependencies
+### Request paths
+
+**`hosts` mode (default):** the OS resolves names normally; `/etc/hosts` short-circuits the lookup for blocked domains. No port 53 is bound. The scheduler is the only thing the daemon needs to do.
+
+**`dns` mode:** the OS is configured to use `127.0.0.1:53` as its resolver. Each query is checked against the in-memory `blocked` map. Blocked A-record queries return `0.0.0.0`; everything else is forwarded to the upstream resolver (with backup-DNS failover).
+
+**`strict` mode:** like `dns`, plus the scheduler asks the pf enforcer to resolve each newly-blocked domain to A/AAAA addresses and load them into a `<blocked_ips>` table inside the `distractions-free` pf anchor. Outbound packets to those IPs are dropped at the kernel.
+
+---
+
+## 3. Module layout
+
+```
+cmd/app/main.go                  # entry point: dispatch and service wiring
+internal/
+  config/config.go               # JSON config + thread-safe in-memory copy
+  enforcer/
+    enforcer.go                  # Enforcer interface + factory + flushDNSCache
+    hosts.go                     # HostsEnforcer — edits /etc/hosts
+    dns.go                       # DNSEnforcer  — updates proxy's blocked map
+    strict.go                    # StrictEnforcer — DNS + pf composition
+  scheduler/scheduler.go         # 1-min ticker, diff computation, AppleScript
+  proxy/dns.go                   # DNS server, GetDNSResponse pure function
+  pf/pf.go                       # pf anchor management (macOS, root)
+  cleanup/cleanup.go             # --clean implementation: per-step, idempotent
+  cleanup/priv_unix.go           # IsPrivileged() — Geteuid()==0
+  cleanup/priv_windows.go        # IsPrivileged() — token IsMember Administrators
+  testcli/testcli.go             # --test-query CLI + GetQueryResult struct
+  web/server.go                  # HTTP handlers, auth middleware
+  web/static/index.html          # embedded SPA (Status/Test/Manage tabs)
+```
+
+Dependency direction:
+
 ```
 cmd/app/main.go
-│
-├── config
-│   └── config.go (loads/stores config.json)
-│
-├── scheduler
-│   └── scheduler.go (evaluates rules every minute)
-│       ├── config
-│       └── proxy (updates blocked domains)
-│
-├── proxy
-│   └── dns.go (intercepts port 53 DNS requests)
-│       ├── config (gets primary/backup DNS)
-│       └── miekg/dns (DNS protocol handling)
-│
-├── web
-│   ├── server.go (HTTP dashboard at :8040)
-│   └── static/* (embedded HTML/CSS/JS)
-│
-└── testcli
-    └── testcli.go (testing without service)
-        ├── config
-        ├── scheduler
-        └── proxy
+  ↓
+  ├── config        ← used by everything
+  ├── enforcer ──→ proxy, pf, config
+  ├── scheduler ──→ enforcer, config
+  ├── proxy ──→ config
+  ├── web ──→ scheduler, enforcer (preview), pf (preview), testcli, config
+  ├── cleanup ──→ enforcer (hosts cleanup), pf, config
+  └── testcli ──→ scheduler, proxy, config
 ```
+
+There are no circular imports. The `proxy` package has no dependency on `enforcer` or `scheduler` — the data flow is one-way: scheduler → enforcer → proxy.
 
 ---
 
-## Core Modules
+## 4. The enforcer abstraction
 
-### 1. Config Module (`internal/config/config.go`)
+The core extension point. Defined in `internal/enforcer/enforcer.go`:
 
-**Purpose**: Centralized configuration management with thread-safe access.
+```go
+type Enforcer interface {
+    Setup() error                       // called once at service start
+    Teardown() error                    // called once at service stop
+    Activate(domains []string) error    // newly-blocked diff
+    Deactivate(domains []string) error  // newly-unblocked diff
+    DeactivateAll() error               // remove every block (used on shutdown)
+}
 
-**Key Structures**:
+func New(cfg config.Config) Enforcer {
+    switch cfg.Settings.GetEnforcementMode() {
+    case "strict": return NewStrictEnforcer(cfg)
+    case "dns":    return NewDNSEnforcer(cfg)
+    default:       return NewHostsEnforcer(cfg)   // includes empty / unrecognised
+    }
+}
+```
+
+`Activate` and `Deactivate` are called with **diffs**, not the full blocked set. The scheduler is responsible for computing the diff from one tick to the next. This keeps the enforcer implementations simple and means a steady-state minute is a no-op.
+
+### `HostsEnforcer` (`hosts.go`)
+
+Edits `/etc/hosts` (or `C:\Windows\System32\drivers\etc\hosts`) between marker lines:
+
+```
+# distractions-free:begin
+0.0.0.0 youtube.com
+0.0.0.0 www.youtube.com
+0.0.0.0 m.youtube.com
+0.0.0.0 mobile.youtube.com
+0.0.0.0 app.youtube.com
+# distractions-free:end
+```
+
+Subdomain prefixes are hardcoded: `["", "www.", "m.", "mobile.", "app."]`. There is no wildcard support in `/etc/hosts`, so this is a deliberate, conservative list. Adding more would inflate the hosts file for marginal benefit.
+
+Writes are atomic: the new contents are written to `/etc/hosts.df.tmp` then renamed over `/etc/hosts`. A crash mid-write cannot leave the file half-rewritten.
+
+Activate is idempotent — entries already present are not duplicated. DeactivateAll removes the entire managed block (markers and all) so the file is restored to its pre-installation form.
+
+After every edit the enforcer flushes the OS resolver cache via `flushDNSCache()` so changes take effect without waiting for TTL.
+
+The `GenerateHostsEntries(domains []string) []string` function is exported so the web UI's `/api/hosts-preview` endpoint can show what *would* be written without root.
+
+### `DNSEnforcer` (`dns.go`)
+
+Maintains an in-memory `blocked map[string]bool` and pushes updates to the `proxy` package via `proxy.UpdateBlockedDomains(snapshot)` on every Activate/Deactivate. The DNS server itself is started by `cmd/app/main.go`, not by the enforcer — this separation matters because the server is the thing that blocks the goroutine forever, and `main.go` needs to control that.
+
+`Teardown` resets the system DNS to its previous state. **Caveat:** the current implementation only resets the `Wi-Fi` interface on macOS (and `Wi-Fi` on Windows). Multi-interface cleanup is delegated to the `--clean` command (see `internal/cleanup/cleanup.go`), which iterates every interface that points at `127.0.0.1`. Tracked in issue #12.
+
+### `StrictEnforcer` (`strict.go`)
+
+Composes a `DNSEnforcer` with the `pf` package. On `Setup` it tries to install the pf anchor; if that fails (non-darwin, missing `pfctl`, edited `pf.conf`) it logs a warning and continues with DNS-only enforcement — a graceful degradation rather than a hard failure.
+
+On `Activate(domains)` it calls `dns.Activate(domains)` then `pf.ActivateBlock(domains, primaryDNS)`, which resolves the domains to IPs and reloads the pf table.
+
+On `Deactivate(domains)` it calls `dns.Deactivate(domains)` then **rebuilds the pf table from scratch** using whatever's still in the DNS-blocked set. Selective IP removal isn't worth the complexity given how few domains are typically active simultaneously.
+
+---
+
+## 5. Scheduler
+
+`internal/scheduler/scheduler.go`. The orchestrator. Two responsibilities:
+
+1. Drive a 1-minute ticker that re-evaluates rules and tells the enforcer about changes.
+2. Fire the macOS-specific UI side effects: 3-minute warning notification and tab-closing AppleScript.
+
+### The pure functions
+
+```go
+func EvaluateRulesAtTime(t time.Time, cfg config.Config) map[string]bool
+func CheckWarningDomainsAtTime(t time.Time, cfg config.Config) []string
+```
+
+`EvaluateRulesAtTime` returns the set of domains that should be blocked at `t`. Algorithm:
+
+1. If `cfg.IsPaused(t)` — return empty map (pause overrides everything).
+2. For each rule with `is_active=true`, look up `Schedules[t.Weekday().String()]`.
+3. For each slot, parse `Start`/`End` as `15:04`, build a same-day comparison time, check `slotStart <= now < slotEnd`.
+4. Add the domain on the first matching slot (no need to keep checking).
+
+`CheckWarningDomainsAtTime` returns domains whose block starts within `[now, now+3min)`. Logic mirrors the above but compares against the slot's start time, building a warning window of `[start-3min, start)`.
+
+Both functions are deterministic and have no side effects — that's the entire point. Tests construct synthetic `time.Time` and `config.Config` values and assert on the returned maps/slices.
+
+### The tick loop
+
+```go
+func Start() {
+    ticker := time.NewTicker(1 * time.Minute)
+    go func() {
+        evaluateRules()              // run once immediately
+        for range ticker.C {
+            evaluateRules()
+        }
+    }()
+}
+
+func evaluateRules() {
+    config.LoadConfig()
+    cfg := config.GetConfig()
+    now := time.Now()
+
+    // 1. Self-clear an expired pause window so config.json stays clean.
+    if cfg.Pause != nil && !now.Before(cfg.Pause.Until) {
+        config.ClearPause()
+        config.SaveConfig()
+        cfg = config.GetConfig()
+    }
+
+    newBlocked := EvaluateRulesAtTime(now, cfg)
+    warningDomains := CheckWarningDomainsAtTime(now, cfg)
+
+    // 2. Diff against the previous tick.
+    var newlyBlocked, newlyUnblocked []string
+    // ... (set difference)
+
+    // 3. Push diff through the active enforcer.
+    if len(newlyBlocked) > 0 {
+        activeEnforcer.Activate(newlyBlocked)
+        closeMacOSTabs(newlyBlocked)
+    }
+    if len(newlyUnblocked) > 0 {
+        activeEnforcer.Deactivate(newlyUnblocked)
+    }
+
+    // 4. Fire warnings, debounced per-domain to once per minute.
+    if len(warningDomains) > 0 {
+        // for each domain, check lastWarningTime[domain]; if >=1min ago, run.
+        runMacOSWarning(domainsToWarn)
+    }
+}
+```
+
+The `activeEnforcer` is wired by `main.go` via `scheduler.SetEnforcer(e)` before `Start()` is called.
+
+`closeMacOSTabs` and `runMacOSWarning` are no-ops on non-darwin. On darwin they call into the AppleScript abstraction (next section).
+
+### AppleScript abstraction
+
+Two interfaces, both globally settable so tests can swap in stubs:
+
+```go
+type AppleScriptGenerator interface {
+    GenerateWarningScript(domains []string) string
+    GenerateCloseTabsScript(domains []string) string
+}
+
+type ScriptExecutor interface {
+    ExecuteScript(script string) error
+    LogScript(script string)
+}
+```
+
+The default executor (`MacOSScriptExecutor`) writes the script to `/tmp/df_script.scpt` and runs it via `osascript`. If the daemon is running as root, it shells out as the console user (via `su - <user> -c osascript ...`) so the notification appears in the user's UI session and AppleScript can talk to Chrome/Safari. Console user is detected via `stat -f %Su /dev/console`.
+
+The close-tabs script enumerates Chrome and Safari windows, matches tab URLs against the blocked domain list (substring match), and closes matching tabs in both browsers.
+
+The warning script first checks which of the upcoming-blocked domains actually have open browser tabs (`getOpenBrowserDomains`) and only fires a notification if there's at least one. This is why the warning UX isn't noisy: if you don't have YouTube open at 08:57, you don't get pinged about it at 09:00.
+
+### Internal state
+
+```go
+var activeBlocks    = make(map[string]bool)  // last tick's blocked set
+var lastEvalTime    time.Time
+var lastWarningTime = make(map[string]time.Time)  // per-domain debounce
+```
+
+All guarded by `activeBlocksMu sync.RWMutex` and `lastWarningMu sync.Mutex`. The `GetStatus()` function returns a copy of `activeBlocks` plus `lastEvalTime` for the `/api/status` endpoint.
+
+---
+
+## 6. DNS proxy
+
+`internal/proxy/dns.go`. Used only when `enforcement_mode` is `dns` or `strict`. Bypassed entirely in `hosts` mode.
+
+### The pure function
+
+```go
+func GetDNSResponse(
+    r *dns.Msg,
+    blocked map[string]bool,
+    primaryDNS, backupDNS string,
+) (*dns.Msg, error)
+```
+
+For each query:
+1. If the question name (suffix-trimmed) is in `blocked` and the qtype is `A`, answer `<name> 60 IN A 0.0.0.0` and return.
+2. Otherwise forward via `dns.Client.Exchange` to `primaryDNS`. On error, retry with `backupDNS`. Return the upstream response verbatim.
+
+This function is what the test suite hits — no port binding, no global state, just `(query, blocked-set, upstream-server)` → response.
+
+### Subdomain matching
+
+`IsDomainBlocked(domain, blocked)` checks both exact match and `.suffix` match — so `m.youtube.com` is blocked when `youtube.com` is in the set. This is `dns`-mode equivalent of the static prefix list that `HostsEnforcer` writes.
+
+### The server
+
+`StartDNSServer()` binds `127.0.0.1:53/udp`, registers `handleDNSRequest` for the `.` zone, and blocks. `handleDNSRequest` reads the current `blocked` map under a read-lock, then calls `GetDNSResponse`.
+
+`StopDNSServer()` calls `dns.Server.Shutdown()` for graceful cleanup. The shutdown happens in `program.Stop()` in `main.go`.
+
+`UpdateBlockedDomains(newBlocked)` is the only mutator — called by `DNSEnforcer.Activate/Deactivate/DeactivateAll` under its own mutex; the proxy then publishes the new map under its own write-lock. Two-tier locking keeps the per-query read lock on the hot path very cheap.
+
+---
+
+## 7. pf (Packet Filter) integration
+
+`internal/pf/pf.go`. macOS-only, requires root, currently used only by `StrictEnforcer`. All exported functions are no-ops on non-darwin so the package can be imported unconditionally.
+
+### Anchor file model
+
+The daemon owns one pf anchor named `distractions-free`, stored at `/etc/pf.anchors/distractions-free`. The anchor file content is regenerated on every Activate:
+
+```
+table <blocked_ips> persist {
+  142.251.215.110
+  142.251.215.111
+  ...
+}
+block drop out quick proto {tcp udp} from any to <blocked_ips>
+```
+
+The anchor is wired into `/etc/pf.conf` between marker lines:
+
+```
+# distractions-free:begin
+anchor "distractions-free"
+load anchor "distractions-free" from "/etc/pf.anchors/distractions-free"
+# distractions-free:end
+```
+
+`InstallAnchor()` writes a stub anchor file, injects the pf.conf block (idempotent — checks for the marker first), runs `pfctl -n -f /etc/pf.conf` to validate the config in dry-run mode, then `pfctl -f /etc/pf.conf` to load it, and finally `pfctl -e` to enable pf if it isn't already.
+
+`RemoveAnchor()` flushes the table, strips the marker block from pf.conf, reloads pf, and deletes the anchor file.
+
+`ActivateBlock(domains, primaryDNS)` resolves each domain to A and AAAA addresses (via `miekg/dns`, falling back to `net.LookupHost`), regenerates the anchor file, runs `pfctl -a distractions-free -f <anchor>` to load it, and then runs `pfctl -k <src> -k <ip>` per IP to kill any existing connections.
+
+`DeactivateBlock()` flushes the table via `pfctl -a distractions-free -t blocked_ips -T flush`, tolerating "No such table" since the table may not exist on first run.
+
+### Why preview functions are exported
+
+The web UI's `/api/pf-preview` endpoint calls `pf.GeneratePreview(domains, dnsServer)` to show users what *would* happen in strict mode without touching pf. This is essentially `ActivateBlock` minus all the side effects — pure resolution and content generation.
+
+---
+
+## 8. Configuration
+
+`internal/config/config.go`. Single global `AppConfig` guarded by an `RWMutex`. All access goes through `GetConfig()` (returns a value copy) and `LoadConfig()` / `SaveConfig()` (file I/O under exclusive lock).
+
+### Schema
+
 ```go
 type Config struct {
-    Settings Settings
-    Rules    []Rule
-}
-
-type Rule struct {
-    Domain    string                // e.g., "youtube.com"
-    IsActive  bool                  // Can disable/enable rules
-    Schedules map[string][]TimeSlot // Key: "Monday", "Tuesday", etc.
-}
-
-type TimeSlot struct {
-    Start string // "09:00"
-    End   string // "17:00"
+    Settings Settings     `json:"settings"`
+    Rules    []Rule       `json:"rules"`
+    Pause    *PauseWindow `json:"pause,omitempty"`
 }
 
 type Settings struct {
-    PrimaryDNS string // e.g., "8.8.8.8:53"
-    BackupDNS  string // e.g., "1.1.1.1:53"
+    PrimaryDNS      string `json:"primary_dns"`
+    BackupDNS       string `json:"backup_dns"`
+    AuthToken       string `json:"auth_token"`
+    EnforcementMode string `json:"enforcement_mode,omitempty"`
+}
+
+type Rule struct {
+    Domain    string                `json:"domain"`
+    IsActive  bool                  `json:"is_active"`
+    Schedules map[string][]TimeSlot `json:"schedules"`  // weekday → slots
+}
+
+type TimeSlot struct {
+    Start string `json:"start"`  // "HH:MM"
+    End   string `json:"end"`    // "HH:MM"
+}
+
+type PauseWindow struct {
+    Until time.Time `json:"until"`
 }
 ```
 
-**Config File Paths**:
-- **macOS**: `/Library/Application Support/DistractionsFree/config.json`
-- **Windows**: `C:\ProgramData\DistractionsFree\config.json`
-- **Linux**: `/etc/distractionsfree/config.json`
-- **Test Mode** (`UseLocalConfig=true`): `./config.json` (current directory)
+`Settings.GetEnforcementMode()` returns the validated mode, defaulting to `"hosts"` for empty or unrecognised values. This is what allows a pre-1.x config without the `enforcement_mode` field to upgrade transparently.
 
-**Key Functions**:
+### File location
 
-1. **GetConfigFilePath()**
-   - Returns the OS-appropriate config path
-   - Creates the directory if it doesn't exist
-   - Uses `UseLocalConfig` flag for test mode
+| OS | Path |
+|---|---|
+| macOS | `/Library/Application Support/DistractionsFree/config.json` |
+| Windows | `%PROGRAMDATA%\DistractionsFree\config.json` |
+| Linux | `/etc/distractionsfree/config.json` |
+| `UseLocalConfig=true` | `./config.json` |
 
-   ```go
-   func GetConfigFilePath() (string, error) {
-       if UseLocalConfig {
-           return "." // Current directory for testing
-       }
-       // Platform-specific paths...
-   }
-   ```
+`UseLocalConfig` is a package-level boolean set by `--no-service`, `--test-web`, and `--test-query` so they can run against a working-directory config without touching system paths.
 
-2. **LoadConfig()**
-   - Reads `config.json` from disk
-   - Parses JSON into `AppConfig`
-   - Returns error if file doesn't exist or is malformed
+### Bootstrap
 
-   ```go
-   func LoadConfig() error {
-       filePath, err := GetConfigFilePath()
-       // ... read file, parse JSON
-       mu.Lock()
-       AppConfig = cfg
-       mu.Unlock()
-       return nil
-   }
-   ```
+On first run, if the config file doesn't exist, `LoadConfig()` writes a default config:
 
-3. **GetConfig()**
-   - Returns a copy of current config
-   - Thread-safe using RWMutex
-   - Used by all modules that need access to rules
+- `primary_dns: "8.8.8.8:53"`, `backup_dns: "1.1.1.1:53"`
+- `enforcement_mode: "hosts"`
+- A randomly generated 32-character hex `auth_token`
+- One seed rule blocking `youtube.com` Mon–Fri 09:00–17:00
 
-   ```go
-   func GetConfig() Config {
-       mu.RLock()
-       defer mu.RUnlock()
-       return AppConfig
-   }
-   ```
+If an existing config has a missing `auth_token`, one is generated and the file is rewritten. This is the only field auto-modified on load.
 
-**Thread Safety**:
-- Uses `sync.RWMutex` for concurrent reads (many goroutines can read simultaneously)
-- Exclusive write lock only when loading new config
+### Reload cadence
+
+The scheduler calls `LoadConfig()` once per tick. `web.ConfigHandler` also calls it on every `GET /api/config` so the dashboard always sees the current file state, not a startup snapshot. There is no inotify/FSEvents listener — 60 seconds of staleness is acceptable for human-edited rules.
+
+### Pause window
+
+`PauseWindow.Until` is an absolute `time.Time` (RFC3339 in JSON). `Config.IsPaused(t)` returns true when the field is non-nil and `t < Until`. `EvaluateRulesAtTime` and `CheckWarningDomainsAtTime` both short-circuit to empty when paused. The scheduler self-clears expired pauses at the top of each tick so `config.json` doesn't accumulate stale entries.
 
 ---
 
-### 2. Scheduler Module (`internal/scheduler/scheduler.go`)
+## 9. Web server & HTTP API
 
-**Purpose**: Evaluates blocking rules at each minute and manages state transitions (tab closing, warnings).
+`internal/web/server.go`. Listens on `127.0.0.1:8040`. Two entry points:
 
-**Key Concept**: The scheduler uses a **testable pure function** (`EvaluateRulesAtTime`) that accepts time as a parameter, making it possible to unit test without mocking time.
+- `StartWebServer()` — used in service mode; same routes, called by `main.go`.
+- `StartTestWebServer()` — used in `--test-web`; loads config from working dir, otherwise identical.
 
-**Key Functions**:
+### Routes
 
-1. **EvaluateRulesAtTime(t time.Time, cfg config.Config) map[string]bool**
+| Path | Method | Auth | Purpose |
+|---|---|---|---|
+| `/` | GET | — | Embedded SPA (HTML/CSS/JS) |
+| `/api/config` | GET | none | Current config — public so the UI can bootstrap the auth token |
+| `/api/config/update` | POST | token | Validate and replace config |
+| `/api/status` | GET, POST | token | `{blocked_domains, last_evaluated, enforcement_mode, paused, paused_until}` |
+| `/api/test-query?time=&domain=` | GET, POST | token | Evaluate `(time, domain)`; POST a `config` form field to test against a custom config |
+| `/api/hosts-preview` | GET, POST | token | Show `/etc/hosts` lines for the current blocked set without writing |
+| `/api/pf-preview` | GET, POST | token | Show resolved IPs and pf anchor content (strict mode only) |
+| `/api/pause` | POST | token | Body `{"minutes": N}` — `1 <= N <= 240` |
+| `/api/pause` | DELETE | token | Clear pause |
 
-   This is the **core blocking logic** - it's a pure function with no side effects.
+### Auth model
 
-   ```go
-   func EvaluateRulesAtTime(t time.Time, cfg config.Config) map[string]bool {
-       currentDay := t.Weekday().String()   // "Monday", "Tuesday", etc.
-       currentTime := t.Format("15:04")     // "10:30", "14:45", etc.
-       
-       newBlocked := make(map[string]bool)
-       
-       for _, rule := range cfg.Rules {
-           if !rule.IsActive {
-               continue
-           }
-           if slots, exists := rule.Schedules[currentDay]; exists {
-               for _, slot := range slots {
-                   // Check if current time falls within the slot
-                   if currentTime >= slot.Start && currentTime < slot.End {
-                       newBlocked[rule.Domain] = true
-                       break
-                   }
-               }
-           }
-       }
-       
-       return newBlocked
-   }
-   ```
+`authMiddleware` rejects any `/api/*` request whose `X-Auth-Token` header doesn't match `config.Settings.AuthToken`. **`GET /api/config` is intentionally exempt** so the SPA can fetch the token on first load and hold it in memory for subsequent calls. The token is treated like any other secret in the config file.
 
-   **Example**: Testing if youtube.com is blocked on Monday 10:30:
-   - `currentDay = "Monday"`
-   - `currentTime = "10:30"`
-   - Find youtube.com rule with schedule: `"Monday": [{"Start": "09:00", "End": "17:00"}]`
-   - Check: `"10:30" >= "09:00" && "10:30" < "17:00"` → **TRUE** → youtube.com is blocked
+This is local-only auth — the server binds `127.0.0.1`, never `0.0.0.0`. Anything running on the same machine as your user can still read the config file and impersonate the dashboard. The auth token's job is to distinguish "the dashboard you opened" from "the random local app that decided to fiddle with port 8040", not to defend against a determined local attacker.
 
-2. **CheckWarningDomainsAtTime(t time.Time, cfg config.Config) []string**
+### Validation
 
-   Returns domains that should trigger 3-minute warnings at this time.
+`ValidatePostedConfig(cfg)` runs server-side on every `POST /api/config/update`. Checks:
 
-   ```go
-   func CheckWarningDomainsAtTime(t time.Time, cfg config.Config) []string {
-       currentDay := t.Weekday().String()
-       futureTime := t.Add(3 * time.Minute).Format("15:04")
-       
-       var warningDomains []string
-       
-       for _, rule := range cfg.Rules {
-           if !rule.IsActive {
-               continue
-           }
-           if slots, exists := rule.Schedules[currentDay]; exists {
-               for _, slot := range slots {
-                   // Warning triggers exactly 3 minutes before block
-                   if futureTime == slot.Start {
-                       warningDomains = append(warningDomains, rule.Domain)
-                   }
-               }
-           }
-       }
-       
-       return warningDomains
-   }
-   ```
+- `enforcement_mode` is empty or one of `"hosts"`, `"dns"`, `"strict"`.
+- Every rule has a non-empty `domain`.
+- Every schedule key is a valid weekday name.
+- Every weekday's slot list is non-empty.
+- Every slot has a valid `15:04` `Start` and `End`.
+- `Start < End`.
 
-   **Example**: At 08:57 AM on Monday, YouTube block starts at 09:00:
-   - `futureTime = 08:57 + 3 min = 09:00`
-   - Find youtube.com with start time 09:00
-   - `09:00 == 09:00` → **TRUE** → Include in warnings
+The auth token is preserved across updates regardless of what the client posts — so the dashboard can't accidentally rotate the secret out from under itself.
 
-3. **Start()**
+### The `resolveConfig` helper
 
-   Launches the scheduler loop that runs every minute.
+`/api/test-query`, `/api/hosts-preview`, and `/api/pf-preview` all support an optional posted config: if the request has a JSON body it's used as the config to evaluate against, otherwise the disk config is reloaded and used. This is what makes the **Test** tab able to "what-if" an arbitrary config without committing it.
 
-   ```go
-   func Start() {
-       ticker := time.NewTicker(1 * time.Minute)
-       go func() {
-           evaluateRules()  // Run immediately, don't wait 1 minute
-           for range ticker.C {
-               evaluateRules()  // Then run every minute
-           }
-       }()
-   }
-   ```
+### Embedded assets
 
-4. **evaluateRules() (internal)**
-
-   Called every minute - orchestrates the rule evaluation, state transitions, and side effects.
-
-   ```go
-   func evaluateRules() {
-       cfg := config.GetConfig()
-       
-       // Get blocked domains at this exact moment
-       newBlocked := EvaluateRulesAtTime(time.Now(), cfg)
-       
-       // Detect transitions
-       for domain, wasBlocked := range activeBlocks {
-           isNowBlocked := newBlocked[domain]
-           if wasBlocked && !isNowBlocked {
-               // TRANSITION: Blocked → Allowed (block ended)
-               log.Printf("Block ended for %s, reopening tabs", domain)
-               if runtime.GOOS == "darwin" {
-                   reopenTabs(domain)  // AppleScript to reopen closed tabs
-               }
-           }
-       }
-       
-       // Detect warnings
-       warnings := CheckWarningDomainsAtTime(time.Now(), cfg)
-       for _, domain := range warnings {
-           log.Printf("3-minute warning for %s", domain)
-           sendNotification(domain)  // Native notification
-       }
-       
-       // Update proxy with new blocked domains
-       proxy.UpdateBlockedDomains(newBlocked)
-       
-       // Store for next iteration
-       activeBlocks = newBlocked
-   }
-   ```
-
-**State Transitions**:
-```
-Time: 08:57 on Monday
-  ├─ Check warnings: youtube.com block starts in 3 min
-  ├─ Send notification: "YouTube will be blocked in 3 minutes"
-  └─ User sees warning
-
-Time: 09:00 on Monday
-  ├─ Check blocking: youtube.com now active
-  ├─ Update proxy's blocked map
-  ├─ AppleScript closes YouTube tabs in Chrome/Safari
-  └─ youtube.com DNS requests return 0.0.0.0
-
-Time: 17:00 on Monday
-  ├─ Check blocking: youtube.com block ended
-  ├─ Update proxy's blocked map
-  └─ youtube.com DNS requests forward to upstream DNS
-```
+`//go:embed static/*` bundles `static/index.html` (a single-page app: HTML + inline CSS/JS) into the binary. The static handler serves it via `http.FileServer(http.FS(fsys))`.
 
 ---
 
-### 3. DNS Proxy Module (`internal/proxy/dns.go`)
+## 10. Process lifecycle
 
-**Purpose**: Intercepts DNS requests on port 53 and either blocks or forwards them.
+`cmd/app/main.go` is both CLI dispatcher and `service.Service` implementation.
 
-**Key Concept**: Uses a **testable pure function** (`GetDNSResponse`) that processes DNS queries without binding to a port, enabling unit tests with real upstream DNS servers.
+### CLI dispatch order
 
-**Key Data Structures**:
+```
+1. --clean [--yes]           → cleanup.* steps, exit
+2. --test-web                → web.StartTestWebServer (UseLocalConfig=true)
+3. --test-query <t> <d>      → testcli.QueryBlocking, exit
+4. --test-applescript        → run AppleScript demo, exit
+5. --no-service              → run program.run() in foreground (UseLocalConfig=true)
+6. --strict                  → config.SetEnforcementMode("strict") + SaveConfig, exit
+7. install/uninstall/start/stop/status/run → service.Control(s, arg)
+8. (no args)                 → s.Run() — service supervisor mode
+```
+
+### Service start path
+
+`program.Start(s)` is called by the service framework. It spawns a goroutine running `program.run()` and returns immediately so the supervisor doesn't think the service hung.
+
 ```go
-var (
-    blockedDomains map[string]bool  // Fast O(1) lookup
-    blockMu        sync.RWMutex     // Thread-safe access
-)
-```
-
-**Key Functions**:
-
-1. **GetDNSResponse(r *dns.Msg, blockedDomainsList map[string]bool, primaryDNS, backupDNS string) (*dns.Msg, error)**
-
-   The testable DNS query processor.
-
-   ```go
-   func GetDNSResponse(r *dns.Msg, blockedDomainsList map[string]bool, 
-                       primaryDNS, backupDNS string) (*dns.Msg, error) {
-       m := new(dns.Msg)
-       m.SetReply(r)  // Copy request ID, question, flags
-       m.Compress = false
-       
-       if len(r.Question) == 0 {
-           return m, nil  // No questions, return empty
-       }
-       
-       q := r.Question[0]
-       domain := strings.TrimSuffix(q.Name, ".")  // "youtube.com." → "youtube.com"
-       
-       // Check if domain is blocked
-       isBlocked := blockedDomainsList[domain]
-       
-       if isBlocked && q.Qtype == dns.TypeA {
-           // Return 0.0.0.0 for blocked A records
-           rr, _ := dns.NewRR(q.Name + " 60 IN A 0.0.0.0")
-           m.Answer = append(m.Answer, rr)
-           return m, nil
-       }
-       
-       // Forward to upstream DNS
-       c := new(dns.Client)
-       
-       in, _, err := c.Exchange(r, primaryDNS)
-       if err != nil {
-           // Failover to backup DNS
-           in, _, err = c.Exchange(r, backupDNS)
-           if err != nil {
-               return nil, err
-           }
-       }
-       return in, nil
-   }
-   ```
-
-   **DNS Response Examples**:
-
-   *Blocked Query*:
-   ```
-   Query:  Q: youtube.com A?
-   Answer: youtube.com 60 IN A 0.0.0.0
-   ```
-
-   *Allowed Query*:
-   ```
-   Query:  Q: google.com A?
-   Answer: google.com 287 IN A 142.251.215.110  (from upstream)
-   ```
-
-2. **UpdateBlockedDomains(newBlocked map[string]bool)**
-
-   Thread-safe update of blocked domains (called by scheduler every minute).
-
-   ```go
-   func UpdateBlockedDomains(newBlocked map[string]bool) {
-       blockMu.Lock()
-       defer blockMu.Unlock()
-       blockedDomains = newBlocked
-   }
-   ```
-
-3. **handleDNSRequest(w dns.ResponseWriter, r *dns.Msg)**
-
-   The actual DNS request handler (called for each incoming DNS query).
-
-   ```go
-   func handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
-       // Get current blocked list (read lock)
-       blockMu.RLock()
-       blockedCopy := blockedDomains
-       blockMu.RUnlock()
-       
-       cfg := config.GetConfig()
-       
-       // Process request
-       m, err := GetDNSResponse(r, blockedCopy, 
-                                cfg.Settings.PrimaryDNS, 
-                                cfg.Settings.BackupDNS)
-       if err != nil {
-           dns.HandleFailed(w, r)
-           return
-       }
-       
-       // Send response
-       w.WriteMsg(m)
-   }
-   ```
-
-4. **StartDNSServer()**
-
-   Binds to port 53 and starts accepting DNS requests. **Requires root/admin privileges.**
-
-   ```go
-   func StartDNSServer() {
-       UpdateBlockedDomains(make(map[string]bool))
-       dns.HandleFunc(".", handleDNSRequest)
-       
-       server := &dns.Server{Addr: "127.0.0.1:53", Net: "udp"}
-       log.Printf("Starting local DNS proxy on 127.0.0.1:53...")
-       if err := server.ListenAndServe(); err != nil {
-           log.Fatalf("Failed to start DNS server: %s", err.Error())
-       }
-   }
-   ```
-
-**DNS Flow Diagram**:
-```
-Application: "What's the IP for youtube.com?"
-             │
-             ▼
-System DNS (127.0.0.1:53) ← configured via networksetup
-             │
-             ▼
-handleDNSRequest()
-    │
-    ├─ Get current blocked domains list
-    │
-    ├─ Parse DNS query
-    │
-    └─ Call GetDNSResponse()
-           │
-           ├─ Is "youtube.com" in blocked list?
-           │
-           ├─ YES: Return 0.0.0.0
-           │       Application tries to connect to 0.0.0.0 → Connection fails
-           │
-           └─ NO: Forward to upstream DNS (8.8.8.8:53)
-                  │
-                  └─ Response: "142.251.215.110" (actual IP)
-                     Application connects successfully
-```
-
----
-
-### 4. Web Server Module (`internal/web/server.go`)
-
-**Purpose**: Provides HTTP API and dashboard at `http://127.0.0.1:8040`.
-
-**Key Functions**:
-
-1. **StartWebServer()**
-
-   Regular web server (runs alongside DNS proxy when service is active).
-
-   ```go
-   func StartWebServer() {
-       staticHandler, err := StaticFileHandler()
-       if err != nil {
-           log.Fatalf("Failed to load embedded web files: %v", err)
-       }
-       
-       http.Handle("/", staticHandler)          // Serve static files
-       http.HandleFunc("/api/config", ConfigHandler)
-       http.HandleFunc("/api/test-query", TestQueryHandler)
-       
-       log.Println("Web server starting on http://127.0.0.1:8040")
-       if err := http.ListenAndServe("127.0.0.1:8040", nil); err != nil {
-           log.Fatalf("Web server failed: %v", err)
-       }
-   }
-   ```
-
-2. **StartTestWebServer()**
-
-   Dedicated test UI server (runs when `--test-web` flag is used).
-
-   ```go
-   func StartTestWebServer() {
-       http.HandleFunc("/", TestPageHandler)        // Serve test UI page
-       http.HandleFunc("/api/config", ConfigHandler)
-       http.HandleFunc("/api/test-query", TestQueryHandler)
-       
-       log.Println("Test web server starting on http://127.0.0.1:8040")
-       if err := http.ListenAndServe("127.0.0.1:8040", nil); err != nil {
-           log.Fatalf("Test web server failed: %v", err)
-       }
-   }
-   ```
-
-3. **ConfigHandler(w http.ResponseWriter, r *http.Request)**
-
-   Returns current config as JSON.
-
-   ```go
-   func ConfigHandler(w http.ResponseWriter, r *http.Request) {
-       w.Header().Set("Content-Type", "application/json")
-       cfg := config.GetConfig()
-       json.NewEncoder(w).Encode(cfg)
-   }
-   ```
-
-   Response:
-   ```json
-   {
-     "settings": {
-       "primary_dns": "8.8.8.8:53",
-       "backup_dns": "1.1.1.1:53"
-     },
-     "rules": [
-       {
-         "domain": "youtube.com",
-         "is_active": true,
-         "schedules": {
-           "Monday": [{"start": "09:00", "end": "17:00"}]
-         }
-       }
-     ]
-   }
-   ```
-
-4. **TestQueryHandler(w http.ResponseWriter, r *http.Request)**
-
-   Processes test queries (both CLI and web UI use this).
-
-   ```go
-   func TestQueryHandler(w http.ResponseWriter, r *http.Request) {
-       w.Header().Set("Content-Type", "application/json")
-       
-       timeStr := r.URL.Query().Get("time")     // "2024-04-01 10:30"
-       domain := r.URL.Query().Get("domain")    // "youtube.com"
-       
-       if timeStr == "" || domain == "" {
-           w.WriteHeader(http.StatusBadRequest)
-           json.NewEncoder(w).Encode(map[string]string{
-               "error": "Missing time or domain parameter",
-           })
-           return
-       }
-       
-       result := testcli.GetQueryResult(timeStr, domain)
-       
-       w.WriteHeader(http.StatusOK)
-       json.NewEncoder(w).Encode(result)
-   }
-   ```
-
-5. **TestPageHandler(w http.ResponseWriter, r *http.Request)**
-
-   Serves the beautiful web UI page with embedded HTML/CSS/JavaScript.
-
-   - Purple gradient background (#667eea → #764ba2)
-   - Responsive form with time and domain inputs
-   - Live config JSON viewer
-   - Real-time results display with color coding
-   - Loading spinner animation
-   - All UI is embedded in the binary (no external files needed)
-
----
-
-### 5. Test CLI Module (`internal/testcli/testcli.go`)
-
-**Purpose**: Provides structured testing without service installation or privileges.
-
-**Key Structures**:
-```go
-type QueryResult struct {
-    Time            string     // "2024-04-01 10:30"
-    Weekday         string     // "Monday"
-    Domain          string     // "youtube.com"
-    IsBlocked       bool       // true
-    BlockingStatus  string     // "🚫 BLOCKED"
-    DNSResponse     string     // "0.0.0.0 (blocking response)"
-    ApplicableRules []RuleInfo // Rules that apply
-    HasWarning      bool       // Will warn in 3 mins?
-    WarningMessage  string     // "⚠️ Warning will trigger..."
-    Error           string     // Error if any
-}
-
-type RuleInfo struct {
-    Domain    string
-    Schedules []ScheduleInfo
-}
-
-type ScheduleInfo struct {
-    Weekday  string // "Monday"
-    Start    string // "09:00"
-    End      string // "17:00"
-    IsActive bool   // Is active right now?
-}
-```
-
-**Key Functions**:
-
-1. **GetQueryResult(timeStr, domain string) QueryResult**
-
-   Returns structured test result (used by both CLI and web UI).
-
-   ```go
-   func GetQueryResult(timeStr, domain string) QueryResult {
-       result := QueryResult{
-           Time:   timeStr,
-           Domain: domain,
-       }
-       
-       // Parse time: "2024-04-01 10:30"
-       testTime, err := time.Parse(timeFormat, timeStr)
-       if err != nil {
-           result.Error = fmt.Sprintf("Invalid time format. Use: %s", timeFormat)
-           return result
-       }
-       
-       result.Weekday = testTime.Weekday().String()
-       
-       // Normalize domain
-       domain = strings.TrimSuffix(domain, ".")
-       if domain == "" {
-           result.Error = "Domain cannot be empty"
-           return result
-       }
-       
-       // Load config
-       if err := config.LoadConfig(); err != nil {
-           result.Error = fmt.Sprintf("Failed to load config: %v", err)
-           return result
-       }
-       
-       cfg := config.GetConfig()
-       
-       // Evaluate blocking rules at this time
-       blockedDomains := scheduler.EvaluateRulesAtTime(testTime, cfg)
-       result.IsBlocked = blockedDomains[domain]
-       
-       // Create DNS query
-       dnsQuery := new(dns.Msg)
-       dnsQuery.SetQuestion(domain+".", dns.TypeA)
-       
-       // Get DNS response
-       response, err := proxy.GetDNSResponse(dnsQuery, blockedDomains,
-                                             cfg.Settings.PrimaryDNS,
-                                             cfg.Settings.BackupDNS)
-       if err != nil {
-           result.Error = fmt.Sprintf("DNS query failed: %v", err)
-           return result
-       }
-       
-       // Format result
-       if result.IsBlocked {
-           result.BlockingStatus = "🚫 BLOCKED"
-           if len(response.Answer) > 0 {
-               if a, ok := response.Answer[0].(*dns.A); ok {
-                   result.DNSResponse = fmt.Sprintf("%s (blocking response)", a.A.String())
-               }
-           }
-       } else {
-           result.BlockingStatus = "✓ ALLOWED (forwarded to upstream DNS)"
-           if len(response.Answer) > 0 {
-               result.DNSResponse = response.Answer[0].String()
-           }
-       }
-       
-       // Find applicable rules
-       for _, rule := range cfg.Rules {
-           if !rule.IsActive || rule.Domain != domain {
-               continue
-           }
-           
-           ruleInfo := RuleInfo{Domain: rule.Domain}
-           
-           if slots, exists := rule.Schedules[testTime.Weekday().String()]; exists {
-               for _, slot := range slots {
-                   currentTime := testTime.Format("15:04")
-                   isActive := currentTime >= slot.Start && currentTime < slot.End
-                   ruleInfo.Schedules = append(ruleInfo.Schedules, ScheduleInfo{
-                       Weekday:  testTime.Weekday().String(),
-                       Start:    slot.Start,
-                       End:      slot.End,
-                       IsActive: isActive,
-                   })
-               }
-           }
-           
-           if len(ruleInfo.Schedules) > 0 {
-               result.ApplicableRules = append(result.ApplicableRules, ruleInfo)
-           }
-       }
-       
-       // Check for warnings
-       warnings := scheduler.CheckWarningDomainsAtTime(testTime, cfg)
-       if contains(warnings, domain) {
-           result.HasWarning = true
-           result.WarningMessage = "⚠️ Warning will trigger 3 minutes before block!"
-       }
-       
-       return result
-   }
-   ```
-
-2. **QueryBlocking(timeStr, domain string) error**
-
-   CLI version - prints formatted output to stdout.
-
-   ```go
-   func QueryBlocking(timeStr, domain string) error {
-       result := GetQueryResult(timeStr, domain)
-       
-       if result.Error != "" {
-           return fmt.Errorf(result.Error)
-       }
-       
-       // Print formatted output
-       separator := strings.Repeat("=", 60)
-       dashLine := strings.Repeat("-", 60)
-       
-       fmt.Println(separator)
-       fmt.Printf("Test Query Result\n")
-       fmt.Println(separator)
-       fmt.Printf("Time:          %s (%s)\n", result.Time, result.Weekday)
-       fmt.Printf("Domain:        %s\n", result.Domain)
-       fmt.Println(dashLine)
-       fmt.Printf("Status:        %s\n", result.BlockingStatus)
-       fmt.Printf("Response:      %s\n", result.DNSResponse)
-       // ... print rules, warnings, etc.
-       fmt.Println(separator)
-       
-       return nil
-   }
-   ```
-
----
-
-## Data Flow
-
-### Flow 1: Service Startup (`./distractions-free install && ./distractions-free start`)
-
-```
-main.go
-  │
-  ├─ Parse args → "start" (service management command)
-  │
-  ├─ Create program{} struct implementing service.Service
-  │
-  ├─ Create service with Config {Name: "DistractionsFree", ...}
-  │
-  ├─ Call service.Control(s, "start")
-  │   │
-  │   ├─ Service framework registers launchd agent (macOS) or Windows Service
-  │   │
-  │   └─ Framework calls program.Start(s)
-  │        │
-  │        ├─ Spawn goroutine: p.run()
-  │        │
-  │        └─ Return success immediately (background)
-  │
-  └─ Exit (service continues in background)
-
-Background Service (p.run())
-  │
-  ├─ config.LoadConfig()
-  │  └─ Read /Library/Application Support/DistractionsFree/config.json
-  │
-  ├─ scheduler.Start()
-  │  └─ Start 1-minute ticker that calls evaluateRules()
-  │
-  ├─ web.StartWebServer()
-  │  └─ Bind to 127.0.0.1:8040 (dashboard)
-  │
-  └─ proxy.StartDNSServer()
-     └─ Bind to 127.0.0.1:53 (requires root, blocks until service stops)
-```
-
-### Flow 2: DNS Request (10:30 AM on Monday, YouTube blocked 09:00-17:00)
-
-```
-1. Application calls getaddrinfo("youtube.com")
-   │
-   ▼
-2. OS looks up system DNS: 127.0.0.1:53
-   │
-   ▼
-3. DNS packet arrives at proxy.StartDNSServer()
-   │
-   ├─ handleDNSRequest(w, r)
-   │  │
-   │  ├─ Get current blockedDomains from scheduler
-   │  │  └─ {"youtube.com": true, "facebook.com": false}
-   │  │
-   │  └─ Call proxy.GetDNSResponse(query, blocked, dnsServers...)
-   │     │
-   │     ├─ Extract domain: "youtube.com."  → "youtube.com"
-   │     │
-   │     ├─ Check: blockedDomainsList["youtube.com"] = true
-   │     │
-   │     └─ Return: "youtube.com 60 IN A 0.0.0.0"
-   │
-   ▼
-4. DNS response sent to application
-   │
-   ▼
-5. Application tries: connect("0.0.0.0:443")
-   │
-   ▼
-6. Connection fails → YouTube is blocked ✓
-```
-
-### Flow 3: Scheduler Minute Tick (09:00 AM on Monday)
-
-```
-Time: 09:00 AM Monday
-  │
-  ▼
-scheduler.Start() ticker fires
-  │
-  ▼
-evaluateRules() called
-  │
-  ├─ cfg = config.GetConfig()
-  │
-  ├─ oldBlocked = activeBlocks  (previous minute's blocked domains)
-  │
-  ├─ newBlocked = scheduler.EvaluateRulesAtTime(now.Time(), cfg)
-  │  │
-  │  └─ Loop through rules:
-  │     - youtube.com: Monday 09:00-17:00
-  │       - currentTime = "09:00"
-  │       - Check: "09:00" >= "09:00" && "09:00" < "17:00" ✓ → BLOCKED
-  │     - facebook.com: Monday 13:00-16:00
-  │       - Check: "09:00" >= "13:00" && "09:00" < "16:00" ✗ → ALLOWED
-  │
-  ├─ Detect state transitions
-  │  └─ oldBlocked has "twitter.com" but newBlocked doesn't
-  │     └─ Block ended! Close tabs with AppleScript
-  │
-  ├─ Check warnings (3 minutes before)
-  │  └─ CheckWarningDomainsAtTime() returns []
-  │
-  ├─ proxy.UpdateBlockedDomains(newBlocked)
-  │  └─ Update the blocked map for DNS requests
-  │
-  └─ activeBlocks = newBlocked
-     └─ Store for next comparison
-```
-
-### Flow 4: Test Query (`./distractions-free --test-query "2024-04-01 10:30" youtube.com`)
-
-```
-main.go
-  │
-  ├─ Parse args → "--test-query", "2024-04-01 10:30", "youtube.com"
-  │
-  ├─ Set config.UseLocalConfig = true
-  │
-  └─ testcli.QueryBlocking("2024-04-01 10:30", "youtube.com")
-     │
-     └─ testcli.GetQueryResult(...)
-        │
-        ├─ Parse time: "2024-04-01 10:30" → time.Time{...}
-        │  └─ Weekday = Monday
-        │
-        ├─ Load config from ./config.json
-        │
-        ├─ Call scheduler.EvaluateRulesAtTime(parsedTime, cfg)
-        │  └─ Returns {"youtube.com": true, ...}
-        │
-        ├─ Build DNS query: "youtube.com A?"
-        │
-        ├─ Call proxy.GetDNSResponse(query, blocked, ...)
-        │  └─ Returns "youtube.com. 60 IN A 0.0.0.0"
-        │
-        └─ Return QueryResult {
-              Time: "2024-04-01 10:30",
-              Weekday: "Monday",
-              Domain: "youtube.com",
-              IsBlocked: true,
-              BlockingStatus: "🚫 BLOCKED",
-              DNSResponse: "0.0.0.0 (blocking response)",
-              ApplicableRules: [{...}],
-              HasWarning: false
-           }
-
-Print formatted output to stdout
-```
-
----
-
-## Service Operation
-
-### Installation Process
-
-**macOS**:
-```bash
-./distractions-free install
-```
-
-Steps:
-1. Service framework creates LaunchAgent plist at `~/Library/LaunchAgents/com.github.distractions-free.plist`
-2. Sets up auto-start on system boot
-3. Requires user to enter password (sudo) for privileged operations
-
-**Windows**:
-```bash
-./distractions-free install
-```
-
-Steps:
-1. Service framework creates Windows Service
-2. Sets up auto-start on system boot
-3. Requires Administrator prompt
-
-### Running as Service
-
-```bash
-./distractions-free start
-```
-
-The service:
-- Runs continuously in background
-- Loads config at startup
-- Starts scheduler (1-minute ticks)
-- Binds to port 53 (requires root/admin)
-- Starts web dashboard on port 8040
-- Handles system sleep/wake gracefully (1-minute ticker resumption)
-
-### Stopping Service
-
-```bash
-./distractions-free stop
-```
-
-Triggers program.Stop():
-- Restores system DNS to default (networksetup)
-- Flushes DNS cache (dscacheutil)
-- Kills mDNSResponder to apply changes
-- All done automatically!
-
-### Accessing Dashboard
-
-While service is running:
-```
-http://127.0.0.1:8040/api/config  (JSON API)
-```
-
-### Non-Service Mode
-
-```bash
-./distractions-free --no-service
-```
-
-Runs exactly like service but in foreground:
-- No privilege escalation needed
-- Uses `./config.json` instead of system paths
-- Useful for testing or development
-
----
-
-## Privileged Operations
-
-### Why Root/Admin is Required
-
-1. **Port 53 Binding** (DNS)
-   - Ports < 1024 require root on Unix/macOS
-   - On Windows, service requires Administrator
-   - Cannot be run as regular user
-
-2. **System DNS Configuration**
-   - modifying system-wide DNS settings requires elevated privileges
-   - On macOS: `networksetup` needs admin
-   - On Windows: PowerShell requires Administrator
-
-3. **System Service Registration**
-   - LaunchAgent (macOS) requires admin
-   - Windows Service requires Administrator
-
-### Privileged Operations in Code
-
-**In proxy/dns.go**:
-```go
-func StartDNSServer() {
-    // This will fail without root/admin
-    server := &dns.Server{Addr: "127.0.0.1:53", Net: "udp"}
-    if err := server.ListenAndServe(); err != nil {
-        // "listen udp 127.0.0.1:53: permission denied"
-        log.Fatalf("Failed to start DNS server: %s", err.Error())
+func (p *program) run() {
+    config.LoadConfig()
+    cfg := config.GetConfig()
+    mode := cfg.Settings.GetEnforcementMode()
+
+    e := enforcer.New(cfg)
+    e.Setup()
+    p.enforcer = e
+
+    scheduler.SetEnforcer(e)
+    scheduler.Start()
+    go web.StartWebServer()
+
+    if mode == "dns" || mode == "strict" {
+        proxy.StartDNSServer()   // blocks until shutdown
+    } else {
+        select {}                // hosts mode: park the goroutine
     }
 }
 ```
 
-**In scheduler/scheduler.go (macOS)**:
-```go
-func evaluateRules() {
-    // ... when block starts ...
-    if runtime.GOOS == "darwin" {
-        // This requires user to be logged in + have access to Chrome/Safari
-        exec.Command("osascript", "-e", script).Run()
-    }
-}
-```
+The terminating call differs by mode: in `dns`/`strict` the DNS server holds the goroutine (and is what `program.Stop` shuts down); in `hosts` mode there's no port binding so we `select {}` to keep the goroutine alive.
 
-**In scheduler/scheduler.go (Stop)**:
+### Service stop path
+
 ```go
 func (p *program) Stop(s service.Service) error {
-    if runtime.GOOS == "darwin" {
-        // These require root/admin to execute
-        exec.Command("networksetup", "-setdnsservers", "Wi-Fi", "Empty").Run()
-        exec.Command("dscacheutil", "-flushcache").Run()
-        exec.Command("killall", "-HUP", "mDNSResponder").Run()
+    proxy.StopDNSServer()
+    if p.enforcer != nil {
+        p.enforcer.Teardown()
     }
     return nil
 }
 ```
 
-### Operations WITHOUT Privileges
+`Teardown` is what restores the system to a usable state:
 
-The testing architecture allows comprehensive testing without root:
+- `HostsEnforcer.Teardown` → `DeactivateAll` → strip the managed block from `/etc/hosts`.
+- `DNSEnforcer.Teardown` → reset Wi-Fi DNS, flush DNS cache.
+- `StrictEnforcer.Teardown` → DNS teardown + `pf.RemoveAnchor`.
 
-**Testable Functions**:
-- `scheduler.EvaluateRulesAtTime()` - Pure function, no system access
-- `proxy.GetDNSResponse()` - No port binding, queries upstream DNS
-- Web handlers - Run on :8040 (no special privileges)
-
-**Why This Works**:
-- Testable functions accept parameters (time, blocked list) instead of calling system functions
-- No mocking needed - real upstream DNS servers respond to test queries
-- No port binding - tests use the functions directly
-- Thread-safe - tests can run in parallel
+`DNSEnforcer.Teardown` only resets the `Wi-Fi` interface today (issue #12). For multi-interface cleanup, use `--clean`.
 
 ---
 
-## Testing Architecture
+## 11. Cleanup (`--clean`)
 
-### Test Strategy
+`internal/cleanup/cleanup.go` plus `priv_unix.go` / `priv_windows.go`. The forensic recovery path: undo every system change distractions-free might have made, even if the service crashed mid-write.
 
-All tests run **without privileges**, **without mocking**, and **without port binding**.
+Each cleanup action is a `Step` with a status (`done`/`skipped`/`warn`/`error`) and an optional `Critical` flag. The summary is printed line-by-line at the end. Critical failures cause a non-zero exit code.
 
-### Unit Test Structure
+### Steps, in order
 
-**scheduler_test.go** (17 tests):
-```go
-func TestEvaluateRulesAtTime_DomainBlockedDuringSchedule(t *testing.T) {
-    cfg := config.Config{
-        Rules: []config.Rule{
-            {
-                Domain: "youtube.com",
-                IsActive: true,
-                Schedules: map[string][]config.TimeSlot{
-                    "Monday": {{Start: "09:00", End: "17:00"}},
-                },
-            },
-        },
-    }
-    
-    // Test specific time: Monday 10:30 (within block)
-    testTime := time.Date(2024, 4, 1, 10, 30, 0, 0, time.UTC)
-    
-    blocked := scheduler.EvaluateRulesAtTime(testTime, cfg)
-    
-    if !blocked["youtube.com"] {
-        t.Error("youtube.com should be blocked at Monday 10:30")
-    }
-}
-```
+1. **Stop the running service** (`service.Control(s, "stop")`). "Not running" is a warning, not an error.
+2. **Reset DNS on every interface** that points at `127.0.0.1`. On macOS this enumerates `networksetup -listallnetworkservices` and runs `networksetup -getdnsservers <name>` per interface. Only interfaces that match `127.0.0.1` are reset to `Empty`. On Windows: a one-liner PowerShell `Get-DnsClientServerAddress | Where ServerAddresses -contains "127.0.0.1" | Set-DnsClientServerAddress -Reset`.
+3. **Strip the managed block from `/etc/hosts`** via `HostsEnforcer.DeactivateAll`. Idempotent — no-op if no block is present.
+4. **Remove the pf anchor** via `pf.RemoveAnchor`. Skipped on non-darwin or if the anchor file doesn't exist.
+5. **Flush the DNS cache** (`dscacheutil -flushcache` + `killall -HUP mDNSResponder` on macOS; `ipconfig /flushdns` on Windows).
+6. **Uninstall the system service** (`service.Control(s, "uninstall")`). Critical.
+7. **Remove the config directory** (`config.ConfigDir()`). Prompts unless `--yes` is passed.
+8. **Remove temp files** (currently `/tmp/df_script.scpt`).
+9. **Verify port 53 is free** by attempting a UDP bind to `127.0.0.1:53`. If something else is holding it, emit a warning suggesting `lsof -i :53`.
 
-**proxy_test.go** (16 tests):
-```go
-func TestGetDNSResponse_AllowedDomainForwarded(t *testing.T) {
-    blocked := map[string]bool{}  // Empty - nothing blocked
-    
-    query := new(dns.Msg)
-    query.SetQuestion("google.com.", dns.TypeA)
-    
-    response, err := proxy.GetDNSResponse(
-        query, 
-        blocked,
-        "8.8.8.8:53",      // Real upstream
-        "1.1.1.1:53",      // Real backup
-    )
-    
-    if err != nil {
-        t.Fatalf("DNS query failed: %v", err)
-    }
-    
-    if len(response.Answer) == 0 {
-        t.Error("Should have DNS response")
-    }
-    
-    // Verify response is from real Google DNS
-    // (actual IP address, not 0.0.0.0)
-}
-```
+### Privilege check
 
-**web_test.go** (16 tests):
-```go
-func TestConfigHandler_ReturnsJSON(t *testing.T) {
-    req := httptest.NewRequest("GET", "/api/config", nil)
-    w := httptest.NewRecorder()
-    
-    ConfigHandler(w, req)
-    
-    if w.Header().Get("Content-Type") != "application/json" {
-        t.Error("Should return application/json")
-    }
-    
-    if w.Code != http.StatusOK {
-        t.Errorf("Expected 200, got %d", w.Code)
-    }
-}
-```
+`IsPrivileged()` is built per-OS:
 
-**testcli_test.go** (22 tests):
-```go
-func TestQueryBlocking_ValidTimeFormat(t *testing.T) {
-    config.UseLocalConfig = true
-    err := testcli.QueryBlocking("2024-04-01 10:30", "google.com")
-    if err != nil {
-        t.Errorf("Valid time format failed: %v", err)
-    }
-}
-```
+- Unix: `os.Geteuid() == 0`.
+- Windows: token-based check via `golang.org/x/sys/windows` against `SECURITY_BUILTIN_DOMAIN_RID + DOMAIN_ALIAS_RID_ADMINS`.
 
-### Running Tests
-
-```bash
-# All tests
-go test ./internal/... -v
-
-# Specific package
-go test ./internal/scheduler -v
-
-# Specific test
-go test ./internal/scheduler -run TestEvaluateRulesAtTime
-
-# Coverage
-go test ./internal/... -cover
-
-# Parallel execution
-go test -race ./internal/...
-```
-
-### Test Results (71 Total Tests)
-
-```
-ok      github.com/vsangava/distractions-free/internal/proxy      0.393s
-ok      github.com/vsangava/distractions-free/internal/scheduler   0.364s
-ok      github.com/vsangava/distractions-free/internal/testcli     0.938s
-ok      github.com/vsangava/distractions-free/internal/web         0.506s
-```
+`runClean` exits early with a clear error message if not privileged.
 
 ---
 
-## Configuration
+## 12. Testability strategy
 
-### Config File Format
+The principle: every piece of logic that's worth testing is a **pure function** of its inputs. Side-effecting code is the thinnest possible wrapper around those functions.
 
-Location: `/Library/Application Support/DistractionsFree/config.json` (macOS)
+| Pure function | Tested behaviour |
+|---|---|
+| `scheduler.EvaluateRulesAtTime(t, cfg)` | All rule semantics: weekday, time slot, multi-slot, inactive rule, paused config, edge times. |
+| `scheduler.CheckWarningDomainsAtTime(t, cfg)` | The 3-min pre-block window. |
+| `proxy.GetDNSResponse(query, blocked, primary, backup)` | Block-returns-0.0.0.0, allowed-forwarded, primary-failover, exact qtype handling, suffix subdomain matching. |
+| `proxy.IsDomainBlocked(domain, blocked)` | Exact and suffix matches. |
+| `enforcer.GenerateHostsEntries(domains)` | Hosts-line generation for the static prefix list. |
+| `pf.GenerateAnchorContent(ips)` | pf table syntax, empty-list behaviour. |
+| `pf.GeneratePreview(domains, dnsServer)` | Resolution + anchor content together. |
+| `web.ValidatePostedConfig(cfg)` | All the bad-input paths. |
+| `web.ConfigHandler` / `TestQueryHandler` etc. | HTTP shape via `httptest`. |
+| `testcli.GetQueryResult(...)` | The struct that drives both the CLI output and the web UI. |
 
-```json
-{
-  "settings": {
-    "primary_dns": "8.8.8.8:53",
-    "backup_dns": "1.1.1.1:53"
-  },
-  "rules": [
-    {
-      "domain": "youtube.com",
-      "is_active": true,
-      "schedules": {
-        "Monday": [
-          {"start": "09:00", "end": "17:00"}
-        ],
-        "Tuesday": [
-          {"start": "09:00", "end": "17:00"}
-        ],
-        "Wednesday": [
-          {"start": "09:00", "end": "17:00"}
-        ],
-        "Thursday": [
-          {"start": "09:00", "end": "17:00"}
-        ],
-        "Friday": [
-          {"start": "09:00", "end": "17:00"}
-        ]
-      }
-    },
-    {
-      "domain": "reddit.com",
-      "is_active": true,
-      "schedules": {
-        "Monday": [
-          {"start": "14:00", "end": "14:30"}
-        ]
-      }
-    },
-    {
-      "domain": "twitter.com",
-      "is_active": false,
-      "schedules": {
-        "Monday": [
-          {"start": "09:00", "end": "17:00"}
-        ]
-      }
-    }
-  ]
-}
-```
+The DNS-response test deliberately queries real `8.8.8.8` and `1.1.1.1` upstreams to verify the forwarding path end-to-end. This is the only test that requires network access.
 
-### Config Reloading
+What's **not** tested by the suite (validated by hand on a real macOS box):
 
-The service **automatically detects config changes** every minute:
+- Port 53 binding (`StartDNSServer`).
+- `networksetup`, `dscacheutil`, `killall mDNSResponder`.
+- `pfctl` invocations.
+- `osascript` invocations against running Chrome/Safari.
+- launchd / Windows Service Manager registration.
 
-```go
-func evaluateRules() {
-    cfg := config.GetConfig()  // Always loads latest from disk
-    // ... rest of evaluation ...
-}
-```
+The `--test-web`, `--test-query`, and `--test-applescript` CLI flags exist exactly to exercise these by-hand paths interactively.
 
-So you can:
-1. Edit `config.json`
-2. Save file
-3. Wait up to 1 minute
-4. New rules take effect automatically (no service restart needed)
+### AppleScript test seam
+
+The scheduler exposes `ScriptExecutor` and `AppleScriptGenerator` interfaces with package-level globals (`scriptExecutor`, `scriptGenerator`) and getters/setters. Tests inject a `TestScriptExecutor` that records executed scripts instead of running `osascript`. The interface boundary lets us assert on script *content* without touching the shell.
 
 ---
 
-## Mode of Operation
+## 13. Concurrency model
 
-### 1. Service Mode (Production)
+Three long-lived goroutines in service mode:
 
-```bash
-# Installation
-sudo ./distractions-free install
+1. **Scheduler tick loop** — single goroutine, fires `evaluateRules()` on a 1-min ticker.
+2. **DNS server** — one goroutine for `Accept`, plus per-request goroutines spawned by `miekg/dns`.
+3. **HTTP server** — one goroutine per request via `net/http` defaults.
 
-# Start service
-sudo ./distractions-free start
+### Shared state and locks
 
-# Verify running
-sudo ./distractions-free status
-```
+| State | Owner | Lock |
+|---|---|---|
+| `config.AppConfig` | `internal/config` | `sync.RWMutex mu` — read on `GetConfig`, write on `LoadConfig`/`SaveConfig`/`SetEnforcementMode`/`SetPause`/`ClearPause` |
+| `scheduler.activeBlocks` | scheduler | `sync.RWMutex activeBlocksMu` — read on diff computation and `GetStatus`, write on tick commit |
+| `scheduler.lastWarningTime` | scheduler | `sync.Mutex lastWarningMu` — only touched once per minute |
+| `proxy.blockedDomains` | proxy | `sync.RWMutex blockMu` — read on every DNS request, write on `UpdateBlockedDomains` |
+| `DNSEnforcer.blocked` | enforcer (one per process) | `sync.Mutex mu` — Activate/Deactivate batches |
 
-**What happens**:
-- Service runs continuously as root/admin
-- Binds to port 53 for DNS
-- Scheduler evaluates every minute
-- Web dashboard accessible at 127.0.0.1:8040
-- Config at system path (`/Library/Application Support/...`)
+The hot path is the per-DNS-query read of `proxy.blockedDomains`; that's why it's an `RWMutex` rather than a regular `Mutex`. Updates from the scheduler happen at most once per minute, so write contention is negligible.
 
----
-
-### 2. No-Service Mode (Local Development)
-
-```bash
-./distractions-free --no-service
-```
-
-**What happens**:
-- Runs in foreground
-- Uses `./config.json` (current directory)
-- Requires NO privileges
-- Perfect for development and testing
+`config.GetConfig()` returns a value copy of the `Config` struct. Slice and map fields inside (`Rules`, `Schedules`) are still references to shared memory — but nothing in the codebase mutates them through a `GetConfig` result. Mutations always go through `LoadConfig`/`SaveConfig`/`SetEnforcementMode`/`SetPause`.
 
 ---
 
-### 3. CLI Test Mode (Quick Testing)
+## 14. Security model
 
-```bash
-./distractions-free --test-query "2024-04-01 10:30" youtube.com
-```
+Distractions-Free is **not** a security tool. It's a friction tool against your own future self. Treat it accordingly:
 
-**Output**:
-```
-============================================================
-Test Query Result
-============================================================
-Time:          2024-04-01 10:30 (Monday)
-Domain:        youtube.com
-------------------------------------------------------------
-Status:        🚫 BLOCKED
-Response:      0.0.0.0 (blocking response)
-------------------------------------------------------------
-Applicable Rules:
-  Domain: youtube.com
-    ✓ Blocked on Monday from 09:00 to 17:00 (ACTIVE)
-------------------------------------------------------------
-⚠️ Warning will trigger 3 minutes before block!
-============================================================
-```
-
-**What happens**:
-- No service needed
-- No privileges required
-- Uses `./config.json`
-- Queries real upstream DNS
-- Exits immediately
+- The dashboard binds `127.0.0.1` only. Network attackers cannot reach `:8040`.
+- The auth token in `X-Auth-Token` keeps random local processes from poking the API by accident, but anything running as your user can read `config.json` and impersonate the dashboard. Same for the PIN — it's client-side only.
+- The Manage-tab PIN is not a password. It's a friction layer designed to make you pause and think before disabling your own focus rules. Trivially bypassed by anyone who reads the JS.
+- The service runs as root (macOS launchd daemon, Windows Service). Anything that compromises the binary inherits root. Build releases via the GitHub Actions workflow; don't run a binary you didn't compile or download from a release tag.
+- `/etc/hosts` and `/etc/pf.conf` edits use atomic temp-file + rename. A crash mid-write cannot corrupt the file. Markers (`# distractions-free:begin`/`:end`) mean other tools that respect them won't trample our entries.
+- The `--clean` command is the canonical recovery path. It iterates every interface, does not assume a happy-path service stop succeeded, and exits non-zero if any critical step fails.
 
 ---
 
-### 4. Web UI Test Mode (Interactive Testing)
+## 15. Platform-specific notes
 
-```bash
-./distractions-free --test-web
-```
+### macOS
 
-**What happens**:
-- Starts web server at 127.0.0.1:8040
-- Opens beautiful interactive UI in browser
-- Real-time DNS queries
-- Displays config and results
-- No privileges required
+- Service framework: `launchd`. The `kardianos/service` library writes a plist to `~/Library/LaunchAgents/com.github.distractions-free.plist` (or system equivalent depending on install context).
+- `osascript` is invoked as the console user (resolved via `stat -f %Su /dev/console`) so notifications appear in the user's UI session and AppleScript can talk to Chrome/Safari. Running `osascript` as root produces a notification nobody can see.
+- `networksetup` is the only supported way to set system DNS — there's no clean API.
+- `dscacheutil -flushcache` + `killall -HUP mDNSResponder` is the canonical cache-flush incantation. Both are needed.
+- `pfctl` requires root and a valid `/etc/pf.conf`. The pf integration validates with `pfctl -n -f` before applying with `pfctl -f`.
 
----
+### Windows
 
-## Request/Response Examples
+- Service framework: Windows Service Manager via `kardianos/service`.
+- Tab closing and pre-block notifications are not implemented — Windows has no equivalent of the AppleScript path. Could be done with PowerShell + browser automation, but isn't currently.
+- `pf` is macOS-only (BSD packet filter); Windows support for strict mode would require WFP integration and isn't planned.
+- DNS reset is done by PowerShell: `Set-DnsClientServerAddress -InterfaceAlias 'Wi-Fi' -ResetServerAddresses`.
+- `ipconfig /flushdns` for cache flush.
 
-### API: Get Current Config
+### Linux
 
-```bash
-curl http://127.0.0.1:8040/api/config
-```
-
-Response:
-```json
-{
-  "settings": {
-    "primary_dns": "8.8.8.8:53",
-    "backup_dns": "1.1.1.1:53"
-  },
-  "rules": [
-    {
-      "domain": "youtube.com",
-      "is_active": true,
-      "schedules": {
-        "Monday": [{"start": "09:00", "end": "17:00"}]
-      }
-    }
-  ]
-}
-```
-
-### API: Test Query (Blocked)
-
-```bash
-curl 'http://127.0.0.1:8040/api/test-query?time=2024-04-01%2010:30&domain=youtube.com'
-```
-
-Response:
-```json
-{
-  "time": "2024-04-01 10:30",
-  "weekday": "Monday",
-  "domain": "youtube.com",
-  "is_blocked": true,
-  "blocking_status": "🚫 BLOCKED",
-  "dns_response": "0.0.0.0 (blocking response)",
-  "applicable_rules": [
-    {
-      "domain": "youtube.com",
-      "schedules": [
-        {
-          "weekday": "Monday",
-          "start": "09:00",
-          "end": "17:00",
-          "is_active": true
-        }
-      ]
-    }
-  ],
-  "has_warning": false
-}
-```
-
-### API: Test Query (Allowed)
-
-```bash
-curl 'http://127.0.0.1:8040/api/test-query?time=2024-04-06%2010:30&domain=google.com'
-```
-
-Response:
-```json
-{
-  "time": "2024-04-06 10:30",
-  "weekday": "Saturday",
-  "domain": "google.com",
-  "is_blocked": false,
-  "blocking_status": "✓ ALLOWED (forwarded to upstream DNS)",
-  "dns_response": "google.com. 287 IN A 142.251.215.110",
-  "applicable_rules": null,
-  "has_warning": false
-}
-```
-
----
-
-## Summary
-
-**Distractions-Free** implements a comprehensive system-level DNS proxy with:
-
-1. **Three-tier architecture**:
-   - Scheduler (evaluates rules every minute)
-   - DNS Proxy (intercepts port 53)
-   - Web UI (dashboard and testing)
-
-2. **Testable design**:
-   - Pure functions for core logic
-   - No mocking needed
-   - Real DNS queries in tests
-
-3. **Multiple operating modes**:
-   - Service mode (production)
-   - No-service mode (development)
-   - CLI test mode (quick verification)
-   - Web UI test mode (interactive testing)
-
-4. **Production-ready**:
-   - Thread-safe operations
-   - Error handling and fallbacks
-   - Automatic config reloading
-   - Clean shutdown and DNS restoration
+- Compiles, but the service path is untested; `kardianos/service` supports systemd but the codebase has no systemd-specific work.
+- `hosts` mode works via `/etc/hosts`. `dns` mode works via `127.0.0.1:53`. AppleScript and pf paths are no-ops.
+- DNS reset is not implemented for Linux interfaces.
