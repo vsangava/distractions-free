@@ -28,9 +28,13 @@ type QueryResult struct {
 }
 
 // RuleInfo holds information about an applicable blocking rule.
+// Group is the rule's group name; MatchedDomain is the specific
+// domain in the group that matched the query (e.g. "roblox.com" when
+// querying "m.roblox.com" against the "games" group).
 type RuleInfo struct {
-	Domain    string         `json:"domain"`
-	Schedules []ScheduleInfo `json:"schedules"`
+	Group         string         `json:"group"`
+	MatchedDomain string         `json:"matched_domain"`
+	Schedules     []ScheduleInfo `json:"schedules"`
 }
 
 // ScheduleInfo holds schedule information.
@@ -118,11 +122,22 @@ func GetQueryResultWithConfig(timeStr, domain string, cfg config.Config) QueryRe
 		if !rule.IsActive {
 			continue
 		}
-		if !proxy.IsDomainBlocked(domain, map[string]bool{rule.Domain: true}) {
+		groupDomains := cfg.ResolveGroup(rule.Group)
+		if len(groupDomains) == 0 {
+			continue
+		}
+		var matched string
+		for _, d := range groupDomains {
+			if proxy.IsDomainBlocked(domain, map[string]bool{d: true}) {
+				matched = d
+				break
+			}
+		}
+		if matched == "" {
 			continue
 		}
 
-		ruleInfo := RuleInfo{Domain: rule.Domain}
+		ruleInfo := RuleInfo{Group: rule.Group, MatchedDomain: matched}
 
 		if slots, exists := rule.Schedules[testTime.Weekday().String()]; exists {
 			for _, slot := range slots {
@@ -242,12 +257,23 @@ func QueryBlocking(timeStr, domain string) error {
 		if !rule.IsActive {
 			continue
 		}
-		if !proxy.IsDomainBlocked(domain, map[string]bool{rule.Domain: true}) {
+		groupDomains := cfg.ResolveGroup(rule.Group)
+		if len(groupDomains) == 0 {
+			continue
+		}
+		var matched string
+		for _, d := range groupDomains {
+			if proxy.IsDomainBlocked(domain, map[string]bool{d: true}) {
+				matched = d
+				break
+			}
+		}
+		if matched == "" {
 			continue
 		}
 
 		foundRules = true
-		fmt.Printf("  Domain: %s\n", rule.Domain)
+		fmt.Printf("  Group: %s (matched %s)\n", rule.Group, matched)
 
 		if slots, exists := rule.Schedules[testTime.Weekday().String()]; exists {
 			for _, slot := range slots {
