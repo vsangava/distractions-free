@@ -31,7 +31,7 @@ Unlike browser extensions — one click to disable — Distractions-Free puts th
 
 ## What it does
 
-- **Blocks distracting domains on a schedule** — per-day, per-time-slot rules per domain. The default mode rewrites `/etc/hosts`, so blocking works across every browser, every app, and every network without any client-side configuration.
+- **Blocks distracting domains on a schedule** — domains are organised into named groups (e.g. `games`, `social`); each rule binds one group to per-day, per-time-slot windows. The default mode rewrites `/etc/hosts`, so blocking works across every browser, every app, and every network without any client-side configuration.
 - **Closes browser tabs when a block starts** — native AppleScript closes matching tabs in Chrome and Safari at the moment the block begins (macOS only).
 - **Sends a 3-minute warning** — native macOS notification before a block starts so you can save your work.
 - **Auto-reloads config every minute** — edit the config file, save, and changes take effect on the next minute boundary. No restart needed.
@@ -155,40 +155,52 @@ The file is generated with sensible defaults on first launch. The scheduler relo
     "enforcement_mode": "hosts",
     "auth_token": "c911284368ac967797e8af4379b3bcb6"
   },
+  "groups": {
+    "games":  ["roblox.com", "epicgames.com", "steampowered.com", "fortnite.com", "minecraft.net"],
+    "social": ["discord.com", "facebook.com", "instagram.com", "tiktok.com", "snapchat.com", "reddit.com"]
+  },
   "rules": [
     {
-      "domain": "youtube.com",
+      "group": "games",
       "is_active": true,
       "schedules": {
-        "Monday":    [{"start": "09:00", "end": "17:00"}],
-        "Tuesday":   [{"start": "09:00", "end": "17:00"}],
-        "Wednesday": [{"start": "09:00", "end": "17:00"}],
-        "Thursday":  [{"start": "09:00", "end": "17:00"}],
-        "Friday":    [{"start": "09:00", "end": "17:00"}]
+        "Monday":    [{"start": "09:00", "end": "15:00"}, {"start": "21:30", "end": "23:59"}],
+        "Tuesday":   [{"start": "09:00", "end": "15:00"}, {"start": "21:30", "end": "23:59"}],
+        "Wednesday": [{"start": "09:00", "end": "15:00"}, {"start": "21:30", "end": "23:59"}],
+        "Thursday":  [{"start": "09:00", "end": "15:00"}, {"start": "21:30", "end": "23:59"}],
+        "Friday":    [{"start": "09:00", "end": "15:00"}, {"start": "21:30", "end": "23:59"}],
+        "Saturday":  [{"start": "21:30", "end": "23:59"}],
+        "Sunday":    [{"start": "21:30", "end": "23:59"}]
       }
     },
     {
-      "domain": "facebook.com",
+      "group": "social",
       "is_active": true,
       "schedules": {
-        "Monday": [
-          {"start": "09:00", "end": "11:00"},
-          {"start": "13:00", "end": "15:00"}
-        ]
+        "Monday":    [{"start": "09:00", "end": "15:00"}, {"start": "21:30", "end": "23:59"}],
+        "Tuesday":   [{"start": "09:00", "end": "15:00"}, {"start": "21:30", "end": "23:59"}],
+        "Wednesday": [{"start": "09:00", "end": "15:00"}, {"start": "21:30", "end": "23:59"}],
+        "Thursday":  [{"start": "09:00", "end": "15:00"}, {"start": "21:30", "end": "23:59"}],
+        "Friday":    [{"start": "09:00", "end": "15:00"}, {"start": "21:30", "end": "23:59"}],
+        "Saturday":  [{"start": "21:30", "end": "23:59"}],
+        "Sunday":    [{"start": "21:30", "end": "23:59"}]
       }
     }
   ]
 }
 ```
 
+The default seed above blocks both groups during school hours (9–3 weekdays) plus every night from 9:30pm — adjust the slots, drop a group from `rules`, or define your own (`work`, `news`, `streaming`…) as needed.
+
 ### Field reference
 
 - **`settings.primary_dns` / `backup_dns`** — upstream resolvers for `dns`/`strict` mode. Ignored in `hosts` mode.
 - **`settings.enforcement_mode`** — `"hosts"` (default), `"dns"`, or `"strict"`. See [Enforcement modes](#enforcement-modes).
 - **`settings.auth_token`** — auto-generated 32-char hex on first launch. The web UI requires this token for every API call except `GET /api/config` (which is intentionally public so the UI can bootstrap the token).
-- **`rules[].domain`** — bare domain (no `www.`). In `hosts` mode the enforcer automatically also blocks the prefixes `www.`, `m.`, `mobile.`, `app.`. Subdomain matching in `dns` mode is suffix-based (`a.b.example.com` is blocked if `example.com` is blocked).
+- **`groups`** — named lists of bare domains (no `www.`) that schedules are bound to. Edit a group once and every rule that uses it updates. In `hosts` mode the enforcer automatically also blocks the prefixes `www.`, `m.`, `mobile.`, `app.` for each member; in `dns` mode subdomain matching is suffix-based (`a.b.example.com` is blocked if `example.com` is in the group).
+- **`rules[].group`** — the group name this rule schedules. Must match a key in `groups`. Validation rejects unknown references.
 - **`rules[].is_active`** — set to `false` to suspend a single rule without deleting it.
-- **`rules[].schedules`** — object keyed by weekday name (`"Monday"` … `"Sunday"`). Each value is an array of `{start, end}` slots in `HH:MM` 24-hour format. A domain is blocked when current time falls in `[start, end)`.
+- **`rules[].schedules`** — object keyed by weekday name (`"Monday"` … `"Sunday"`). Each value is an array of `{start, end}` slots in `HH:MM` 24-hour format. Every domain in the rule's group is blocked when current time falls in `[start, end)`.
 - **`pause`** *(optional)* — `{"until": "<RFC3339 timestamp>"}`. While set, all blocking is suspended. Cleared automatically once `until` passes. Easiest to set via the dashboard or the [`/api/pause`](#http-api) endpoint.
 
 ### Editing rules from the command line

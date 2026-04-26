@@ -78,12 +78,13 @@ TOKEN=$(curl -s http://localhost:8040/api/config | jq -r '.settings.auth_token')
 curl -s -H "X-Auth-Token: $TOKEN" http://localhost:8040/api/status | jq
 # → { "blocked_domains": {...}, "last_evaluated": "...", "enforcement_mode": "hosts", "paused": false }
 
-# What rules are loaded?
+# What groups and rules are loaded?
 curl -s http://localhost:8040/api/config | jq
 
 # Would a specific (time, domain) be blocked?
+# (Response includes the group name and which member of the group matched.)
 curl -s -H "X-Auth-Token: $TOKEN" \
-  "http://localhost:8040/api/test-query?time=2024-04-01%2010:30&domain=youtube.com" | jq
+  "http://localhost:8040/api/test-query?time=2024-04-01%2010:30&domain=roblox.com" | jq
 ```
 
 The same checks via the dashboard: open `http://localhost:8040`, look at the **Status** tab. The blocked-domains list and `last_evaluated` timestamp tell you whether the scheduler is ticking and what it last decided.
@@ -119,7 +120,7 @@ If the block *is* there but the site loads anyway:
 
 - Your browser or app may have cached the DNS resolution. Try a private window, or restart the app.
 - The browser may be using DNS-over-HTTPS (DoH) or DNS-over-TLS (DoT), which bypasses `/etc/hosts`. **Disable DoH** in the browser, or switch to `dns`/`strict` mode (which also won't help against DoH unless you can intercept the upstream — `pf` in strict mode does, since it blocks the resolved IPs at the kernel).
-- The site may be served from a CDN domain not covered by the static prefix list (`""`, `www.`, `m.`, `mobile.`, `app.`). Add the relevant subdomain as its own rule.
+- The site may be served from a CDN domain not covered by the static prefix list (`""`, `www.`, `m.`, `mobile.`, `app.`). Add the relevant subdomain to the relevant group in `config.json`.
 
 To preview what *would* be written without root:
 
@@ -305,7 +306,7 @@ Three flags exist exactly so you can test the daemon's core logic without privil
 ./distractions-free --test-applescript
 ```
 
-`--test-query` and `--test-web` use `./config.json` in the working directory rather than the system path, so you can iterate on rules without touching the live config. `make build` followed by `--test-web` is the fastest dev loop for trying out new rule shapes.
+`--test-query` and `--test-web` use `./config.json` in the working directory rather than the system path, so you can iterate on groups and rules without touching the live config. `make build` followed by `--test-web` is the fastest dev loop for trying out new group shapes or schedule timings.
 
 ---
 

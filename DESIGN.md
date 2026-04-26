@@ -24,7 +24,7 @@ This document describes how the daemon is built. It complements [README.md](./RE
 
 ## 1. Overview
 
-Distractions-Free is a single-binary Go daemon that runs as a privileged system service. It enforces per-domain, per-time-of-day blocking rules on the host so that distracting sites become unreachable during configured windows.
+Distractions-Free is a single-binary Go daemon that runs as a privileged system service. It enforces per-time-of-day blocking rules on the host — each rule binds a named group of domains (e.g. `games`, `social`) to a weekly schedule — so distracting sites become unreachable during configured windows.
 
 The interesting design decisions:
 
@@ -230,9 +230,9 @@ func CheckWarningDomainsAtTime(t time.Time, cfg config.Config) []string
 `EvaluateRulesAtTime` returns the set of domains that should be blocked at `t`. Algorithm:
 
 1. If `cfg.IsPaused(t)` — return empty map (pause overrides everything).
-2. For each rule with `is_active=true`, look up `Schedules[t.Weekday().String()]`.
+2. For each rule with `is_active=true`, resolve `cfg.ResolveGroup(rule.Group)` to a domain list (skip the rule if the group is missing or empty), then look up `Schedules[t.Weekday().String()]`.
 3. For each slot, parse `Start`/`End` as `15:04`, build a same-day comparison time, check `slotStart <= now < slotEnd`.
-4. Add the domain on the first matching slot (no need to keep checking).
+4. On the first matching slot, add every domain in the resolved group to the result and stop checking remaining slots for that rule.
 
 `CheckWarningDomainsAtTime` returns domains whose block starts within `[now, now+3min)`. Logic mirrors the above but compares against the slot's start time, building a warning window of `[start-3min, start)`.
 
@@ -407,9 +407,10 @@ The web UI's `/api/pf-preview` endpoint calls `pf.GeneratePreview(domains, dnsSe
 
 ```go
 type Config struct {
-    Settings Settings     `json:"settings"`
-    Rules    []Rule       `json:"rules"`
-    Pause    *PauseWindow `json:"pause,omitempty"`
+    Settings Settings            `json:"settings"`
+    Groups   map[string][]string `json:"groups"`
+    Rules    []Rule              `json:"rules"`
+    Pause    *PauseWindow        `json:"pause,omitempty"`
 }
 
 type Settings struct {
@@ -420,9 +421,9 @@ type Settings struct {
 }
 
 type Rule struct {
-    Domain    string                `json:"domain"`
+    Group     string                `json:"group"`     // key into Config.Groups
     IsActive  bool                  `json:"is_active"`
-    Schedules map[string][]TimeSlot `json:"schedules"`  // weekday → slots
+    Schedules map[string][]TimeSlot `json:"schedules"` // weekday → slots
 }
 
 type TimeSlot struct {
@@ -435,7 +436,13 @@ type PauseWindow struct {
 }
 ```
 
+`Config.ResolveGroup(name)` returns the domain list for `name`, or `nil` if the group is missing — the scheduler treats a missing group as a silent no-op so a rule referencing a deleted group degrades safely instead of panicking.
+
 `Settings.GetEnforcementMode()` returns the validated mode, defaulting to `"hosts"` for empty or unrecognised values. This is what allows a pre-1.x config without the `enforcement_mode` field to upgrade transparently.
+
+### Why groups instead of inline domains
+
+A rule used to carry a single `Domain` string, which meant blocking five gaming sites required five rules with the same schedule duplicated five times. The groups indirection lets one schedule cover an arbitrary set of domains, and means edits to "what counts as a game" don't require touching any schedule. `EvaluateRulesAtTime` and `CheckWarningDomainsAtTime` resolve the group at evaluation time (per tick), so live edits to a group's member list propagate within 60 seconds without any rule changes. There is no inline-domains fallback — `ValidatePostedConfig` rejects any rule whose `group` doesn't reference an existing key.
 
 ### File location
 
@@ -455,7 +462,7 @@ On first run, if the config file doesn't exist, `LoadConfig()` writes a default 
 - `primary_dns: "8.8.8.8:53"`, `backup_dns: "1.1.1.1:53"`
 - `enforcement_mode: "hosts"`
 - A randomly generated 32-character hex `auth_token`
-- One seed rule blocking `youtube.com` Mon–Fri 09:00–17:00
+- Two seed groups — `games` (roblox/epic/steam/fortnite/minecraft) and `social` (discord/facebook/instagram/tiktok/snapchat/reddit) — each bound by an active rule to the school window (09:00–15:00 weekdays) plus a nightly window (21:30–23:59 every day).
 
 If an existing config has a missing `auth_token`, one is generated and the file is rewritten. This is the only field auto-modified on load.
 
@@ -501,11 +508,14 @@ This is local-only auth — the server binds `127.0.0.1`, never `0.0.0.0`. Anyth
 `ValidatePostedConfig(cfg)` runs server-side on every `POST /api/config/update`. Checks:
 
 - `enforcement_mode` is empty or one of `"hosts"`, `"dns"`, `"strict"`.
-- Every rule has a non-empty `domain`.
+- Every group has a non-empty name and at least one non-empty domain.
+- Every rule has a non-empty `group`, and that group exists in `cfg.Groups`.
 - Every schedule key is a valid weekday name.
 - Every weekday's slot list is non-empty.
 - Every slot has a valid `15:04` `Start` and `End`.
 - `Start < End`.
+
+The browser-side `parseAndValidate` mirrors the same rules so the textarea flags errors before they reach the server. Both are intentional duplicates — the JS catches typos in the editor; the Go is the source of truth.
 
 The auth token is preserved across updates regardless of what the client posts — so the dashboard can't accidentally rotate the secret out from under itself.
 
