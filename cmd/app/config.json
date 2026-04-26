@@ -4,41 +4,48 @@
     "backup_dns": "1.1.1.1:53",
     "enforcement_mode": "hosts"
   },
+  "groups": {
+    "games": [
+      "roblox.com",
+      "epicgames.com",
+      "steampowered.com",
+      "fortnite.com",
+      "minecraft.net"
+    ],
+    "social": [
+      "discord.com",
+      "facebook.com",
+      "instagram.com",
+      "tiktok.com",
+      "snapchat.com",
+      "reddit.com"
+    ]
+  },
   "rules": [
     {
-      "domain": "youtube.com",
+      "group": "games",
       "is_active": true,
       "schedules": {
-        "Friday": [
-          {
-            "start": "09:00",
-            "end": "17:00"
-          }
-        ],
-        "Monday": [
-          {
-            "start": "09:00",
-            "end": "17:00"
-          }
-        ],
-        "Thursday": [
-          {
-            "start": "09:00",
-            "end": "17:00"
-          }
-        ],
-        "Tuesday": [
-          {
-            "start": "09:00",
-            "end": "17:00"
-          }
-        ],
-        "Wednesday": [
-          {
-            "start": "09:00",
-            "end": "17:00"
-          }
-        ]
+        "Monday":    [{"start": "09:00", "end": "15:00"}, {"start": "21:30", "end": "23:59"}],
+        "Tuesday":   [{"start": "09:00", "end": "15:00"}, {"start": "21:30", "end": "23:59"}],
+        "Wednesday": [{"start": "09:00", "end": "15:00"}, {"start": "21:30", "end": "23:59"}],
+        "Thursday":  [{"start": "09:00", "end": "15:00"}, {"start": "21:30", "end": "23:59"}],
+        "Friday":    [{"start": "09:00", "end": "15:00"}, {"start": "21:30", "end": "23:59"}],
+        "Saturday":  [{"start": "21:30", "end": "23:59"}],
+        "Sunday":    [{"start": "21:30", "end": "23:59"}]
+      }
+    },
+    {
+      "group": "social",
+      "is_active": true,
+      "schedules": {
+        "Monday":    [{"start": "09:00", "end": "15:00"}, {"start": "21:30", "end": "23:59"}],
+        "Tuesday":   [{"start": "09:00", "end": "15:00"}, {"start": "21:30", "end": "23:59"}],
+        "Wednesday": [{"start": "09:00", "end": "15:00"}, {"start": "21:30", "end": "23:59"}],
+        "Thursday":  [{"start": "09:00", "end": "15:00"}, {"start": "21:30", "end": "23:59"}],
+        "Friday":    [{"start": "09:00", "end": "15:00"}, {"start": "21:30", "end": "23:59"}],
+        "Saturday":  [{"start": "21:30", "end": "23:59"}],
+        "Sunday":    [{"start": "21:30", "end": "23:59"}]
       }
     }
   ]
