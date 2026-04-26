@@ -91,6 +91,26 @@ networksetup -setdnsservers Ethernet 127.0.0.1
 Once the service is running, you can access the local dashboard and API via:
 👉 **http://localhost:8040**
 
+The dashboard has three tabs:
+
+- **Status** — currently blocked domains, enforcement mode, and upcoming block/unblock events for the next 24 hours.
+- **Test** — test whether a domain would be blocked at any given time, optionally with a custom config (changes here don't affect the live service).
+- **Manage** — update the live config and pause/resume blocking. This tab is PIN-protected.
+
+#### Manage tab PIN
+
+The Manage tab requires a 4-digit PIN before any changes can be made. The PIN is the current time formatted as `HHMM`. Both 24-hour and 12-hour formats are accepted:
+
+| Current time | Valid PINs |
+|---|---|
+| 2:35 PM | `1435` (24h) or `0235` (12h) |
+| 9:05 AM | `0905` (both formats are the same) |
+| 9:05 PM | `2105` (24h) or `0905` (12h) |
+| 12:00 noon | `1200` (both formats are the same) |
+| 12:00 midnight | `0000` (24h) or `1200` (12h) |
+
+The PIN is validated client-side only. It unlocks the Manage tab for the current browser session and resets on page reload.
+
 ### Enforcement Modes
 
 Distractions-Free supports three enforcement modes, configured via the `enforcement_mode` field in `settings`. If the field is absent the daemon defaults to `"hosts"`.

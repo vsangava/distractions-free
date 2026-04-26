@@ -3,1053 +3,1273 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Distractions-Free Test Query</title>
+    <title>Distractions-Free</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             display: flex;
             justify-content: center;
-            align-items: center;
-            padding: 20px;
+            align-items: flex-start;
+            padding: 24px 16px;
         }
+
         .container {
             background: white;
-            border-radius: 12px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            border-radius: 16px;
+            box-shadow: 0 24px 64px rgba(0,0,0,0.3);
             max-width: 1000px;
             width: 100%;
-            padding: 40px;
+            overflow: hidden;
         }
-        h1 {
-            color: #333;
-            margin-bottom: 10px;
-            font-size: 28px;
-        }
-        .subtitle {
-            color: #666;
-            margin-bottom: 30px;
-            font-size: 14px;
-        }
-        .form-group {
-            margin-bottom: 20px;
-        }
-        label {
-            display: block;
-            color: #333;
-            font-weight: 600;
-            margin-bottom: 8px;
-            font-size: 14px;
-        }
-        input[type="text"],
-        textarea {
-            width: 100%;
-            padding: 12px;
-            border: 2px solid #e0e0e0;
-            border-radius: 6px;
-            font-family: monospace;
-            font-size: 14px;
-            transition: border-color 0.3s;
-        }
-        input[type="text"]:focus,
-        textarea:focus {
-            outline: none;
-            border-color: #667eea;
-            background: #f9f9ff;
-        }
-        textarea {
-            resize: vertical;
-            min-height: 300px;
-        }
-        .input-row {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
-        }
-        .button-group {
-            display: flex;
-            gap: 12px;
-            flex-wrap: wrap;
-            margin-bottom: 20px;
-        }
-        button {
+
+        /* Header */
+        .app-header {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 22px 32px;
             color: white;
-            border: none;
-            padding: 10px 24px;
-            border-radius: 6px;
-            font-size: 14px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: transform 0.2s, box-shadow 0.2s;
         }
-        button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
-        }
-        button:active {
-            transform: translateY(0);
-        }
-        .button-secondary {
-            background: linear-gradient(135deg, #6c757d 0%, #5a6268 100%);
-        }
-        .config-status {
-            font-size: 12px;
-            margin-top: 4px;
-            color: #666;
-        }
-        .config-status.valid {
-            color: #28a745;
-            font-weight: 600;
-        }
-        .config-status.invalid {
-            color: #dc3545;
-            font-weight: 600;
-        }
-        .result-section {
-            margin-top: 40px;
-            padding-top: 40px;
-            border-top: 2px solid #e0e0e0;
-        }
-        .result-section.hidden {
-            display: none;
-        }
-        .result-item {
-            display: grid;
-            grid-template-columns: 120px 1fr;
-            gap: 20px;
-            margin-bottom: 16px;
-        }
-        .result-label {
-            font-weight: 600;
-            color: #667eea;
-            font-size: 14px;
-        }
-        .result-value {
-            color: #333;
-            font-family: monospace;
-            font-size: 14px;
-            word-break: break-all;
-        }
-        .status-blocked {
-            color: #dc3545;
-            font-weight: bold;
-        }
-        .status-allowed {
-            color: #28a745;
-            font-weight: bold;
-        }
-        .rules-list {
-            background: #f9f9ff;
-            padding: 16px;
-            border-radius: 6px;
-            margin-top: 8px;
-        }
-        .rule-item {
-            margin-bottom: 12px;
-            padding-bottom: 12px;
-            border-bottom: 1px solid #e0e0e0;
-        }
-        .rule-item:last-child {
-            border-bottom: none;
-            margin-bottom: 0;
-            padding-bottom: 0;
-        }
-        .schedule-slot {
-            margin-top: 8px;
-            padding: 8px;
-            background: white;
-            border-left: 3px solid #667eea;
-            border-radius: 3px;
-            font-size: 13px;
-        }
-        .schedule-active {
-            color: #28a745;
-            font-weight: bold;
-        }
-        .schedule-inactive {
-            color: #999;
-        }
-        .warning-banner {
-            background: #fff3cd;
-            border: 2px solid #ffc107;
-            color: #856404;
-            padding: 12px;
-            border-radius: 6px;
-            margin-top: 16px;
-            font-weight: 600;
-        }
-        .error-banner {
-            background: #f8d7da;
-            border: 2px solid #f5c6cb;
-            color: #721c24;
-            padding: 12px;
-            border-radius: 6px;
-            margin-top: 16px;
-            font-weight: 600;
-        }
-        .success-banner {
-            background: #d4edda;
-            border: 2px solid #c3e6cb;
-            color: #155724;
-            padding: 12px;
-            border-radius: 6px;
-            margin-top: 16px;
-            font-weight: 600;
-        }
-        .loading {
-            display: none;
-            text-align: center;
-            margin-top: 20px;
-        }
-        .spinner {
-            border: 3px solid #f3f3f3;
-            border-top: 3px solid #667eea;
-            border-radius: 50%;
-            width: 32px;
-            height: 32px;
-            animation: spin 1s linear infinite;
-            display: inline-block;
-        }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        .time-format-hint {
-            font-size: 12px;
-            color: #999;
-            margin-top: 4px;
-        }
+        .app-header h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.3px; }
+        .app-header p  { font-size: 12px; opacity: 0.75; margin-top: 3px; }
+
+        /* Tabs */
         .tabs {
             display: flex;
-            gap: 10px;
-            margin-bottom: 20px;
-            border-bottom: 2px solid #e0e0e0;
+            border-bottom: 1px solid #e9ecef;
+            padding: 0 32px;
+            background: #fafafa;
         }
         .tab-button {
             background: none;
             border: none;
             border-bottom: 3px solid transparent;
-            color: #666;
-            padding: 10px 16px;
+            color: #6c757d;
+            padding: 13px 20px;
+            font-size: 14px;
             font-weight: 600;
             cursor: pointer;
-            transition: all 0.3s;
-            margin-bottom: -2px;
+            transition: color 0.2s, border-color 0.2s;
+            margin-bottom: -1px;
         }
-        .tab-button.active {
-            color: #667eea;
-            border-bottom-color: #667eea;
+        .tab-button:hover { color: #495057; transform: none; box-shadow: none; }
+        .tab-button.active { color: #667eea; border-bottom-color: #667eea; }
+        .lock-badge { font-size: 11px; margin-left: 4px; }
+
+        /* Tab content */
+        .tab-content { display: none; padding: 28px 32px; }
+        .tab-content.active { display: block; }
+
+        /* Section */
+        .section { margin-bottom: 28px; }
+        .section-title {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.7px;
+            color: #adb5bd;
+            margin-bottom: 12px;
         }
-        .tab-content {
-            display: none;
-        }
-        .tab-content.active {
-            display: block;
-        }
-        .status-header {
+        .section-header {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            margin-bottom: 20px;
+            margin-bottom: 12px;
         }
-        .status-meta {
+
+        /* Badges */
+        .mode-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 4px 11px;
+            border-radius: 20px;
             font-size: 12px;
-            color: #999;
+            font-weight: 600;
+            color: white;
+            margin-bottom: 12px;
         }
-        .blocked-list {
-            list-style: none;
+        .mode-badge.hosts  { background: #28a745; }
+        .mode-badge.dns    { background: #007bff; }
+        .mode-badge.strict { background: #dc3545; }
+
+        .active-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 600;
         }
-        .blocked-list li {
+        .active-badge.on  { background: #d4edda; color: #155724; }
+        .active-badge.off { background: #e9ecef; color: #6c757d; }
+
+        /* Pause banner */
+        .pause-banner {
+            background: #fff8e1;
+            border: 1px solid #ffe082;
+            border-radius: 8px;
+            padding: 10px 14px;
+            margin-bottom: 12px;
+            font-size: 13px;
+            font-weight: 600;
+            color: #856404;
+        }
+
+        /* Blocked list */
+        .blocked-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+        .blocked-item {
             display: flex;
             align-items: center;
             gap: 10px;
-            padding: 10px 14px;
-            border-radius: 6px;
-            margin-bottom: 8px;
-            background: #fff0f0;
-            border: 1px solid #f5c6cb;
+            padding: 8px 13px;
+            border-radius: 8px;
+            background: #fff5f5;
+            border: 1px solid #ffd6d6;
             font-family: monospace;
-            font-size: 14px;
-            color: #721c24;
+            font-size: 13px;
+            color: #c92a2a;
         }
-        .blocked-list li::before {
-            content: "🚫";
+        .blocked-dot {
+            width: 7px; height: 7px;
+            border-radius: 50%;
+            background: #dc3545;
+            flex-shrink: 0;
         }
         .status-empty {
             color: #28a745;
+            font-size: 14px;
             font-weight: 600;
-            padding: 16px 0;
+            padding: 8px 0;
         }
-        .button-refresh {
-            background: linear-gradient(135deg, #28a745 0%, #1e7e34 100%);
+        .status-meta { font-size: 11px; color: #adb5bd; margin-top: 8px; }
+
+        /* Upcoming */
+        .upcoming-list { display: flex; flex-direction: column; }
+        .upcoming-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 9px 0;
+            border-bottom: 1px solid #f1f3f5;
             font-size: 13px;
-            padding: 8px 18px;
         }
-        .pause-panel {
-            margin-top: 20px;
-            padding: 16px;
+        .upcoming-item:last-child { border-bottom: none; }
+        .upcoming-dot {
+            width: 7px; height: 7px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .upcoming-dot.block   { background: #dc3545; }
+        .upcoming-dot.unblock { background: #28a745; }
+        .upcoming-eta    { color: #adb5bd; font-size: 12px; width: 76px; flex-shrink: 0; }
+        .upcoming-domain { font-family: monospace; font-weight: 600; color: #343a40; flex: 1; }
+        .upcoming-slot   { font-size: 12px; color: #868e96; font-family: monospace; }
+        .upcoming-type {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            padding: 2px 7px;
+            border-radius: 4px;
+        }
+        .upcoming-type.block   { background: #fff5f5; color: #dc3545; }
+        .upcoming-type.unblock { background: #f0fff4; color: #28a745; }
+        .upcoming-empty { font-size: 13px; color: #adb5bd; padding: 6px 0; }
+
+        /* Rules table */
+        .rules-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .rules-table th {
+            text-align: left;
+            padding: 7px 12px;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #adb5bd;
+            border-bottom: 1px solid #e9ecef;
+        }
+        .rules-table td {
+            padding: 9px 12px;
+            border-bottom: 1px solid #f1f3f5;
+            vertical-align: top;
+        }
+        .rules-table tr:last-child td { border-bottom: none; }
+        .rules-table td:first-child { font-family: monospace; font-weight: 600; color: #343a40; }
+        .slot-list { display: flex; flex-direction: column; gap: 2px; }
+        .slot-tag  { font-family: monospace; font-size: 12px; color: #495057; }
+
+        /* Buttons */
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 9px 20px;
             border-radius: 8px;
-            border: 2px solid #e0e0e0;
-            background: #fafafa;
-        }
-        .pause-panel h3 {
-            font-size: 14px;
+            font-size: 13px;
             font-weight: 600;
-            color: #333;
-            margin-bottom: 12px;
+            cursor: pointer;
+            transition: opacity 0.2s, transform 0.1s;
         }
-        .pause-active {
-            border-color: #ffc107;
+        button:hover   { opacity: 0.88; }
+        button:active  { transform: scale(0.97); }
+        .btn-sm        { padding: 6px 14px; font-size: 12px; }
+        .btn-secondary { background: linear-gradient(135deg, #6c757d, #5a6268); }
+        .btn-success   { background: linear-gradient(135deg, #28a745, #1e7e34); }
+        .btn-warning   { background: linear-gradient(135deg, #fd7e14, #e55a00); }
+        .btn-outline {
+            background: none;
+            color: #667eea;
+            border: 1.5px solid #667eea;
+        }
+        .btn-outline:hover { background: #f0f2ff; opacity: 1; }
+        .button-group { display: flex; gap: 10px; flex-wrap: wrap; }
+
+        /* Forms */
+        .form-group { margin-bottom: 16px; }
+        label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: #495057;
+            margin-bottom: 6px;
+        }
+        input[type="text"],
+        textarea {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1.5px solid #dee2e6;
+            border-radius: 8px;
+            font-family: inherit;
+            font-size: 13px;
+            transition: border-color 0.2s;
+            background: white;
+        }
+        input[type="text"]:focus,
+        textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            background: #f8f9ff;
+        }
+        textarea { font-family: monospace; resize: vertical; min-height: 280px; }
+        .field-hint { font-size: 11px; color: #adb5bd; margin-top: 4px; }
+        .input-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .config-status { font-size: 12px; margin-top: 4px; }
+        .config-status.valid   { color: #28a745; font-weight: 600; }
+        .config-status.invalid { color: #dc3545; font-weight: 600; }
+
+        /* Banners */
+        .banner {
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            margin-top: 12px;
+        }
+        .banner.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .banner.error   { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .banner.warning { background: #fff3cd; color: #856404; border: 1px solid #ffe082; }
+
+        /* Preview panels */
+        .preview-panel { margin-top: 16px; display: none; }
+        .preview-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+        .preview-title { font-size: 13px; font-weight: 600; color: #495057; }
+        .preview-title span { font-weight: 400; color: #adb5bd; font-size: 12px; }
+        .preview-meta { font-size: 11px; color: #adb5bd; }
+        pre.preview-code {
+            background: #1e1e2e;
+            color: #cdd6f4;
+            border-radius: 8px;
+            padding: 14px 16px;
+            font-size: 12px;
+            line-height: 1.6;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            margin: 0;
+            border: 1px solid #313244;
+        }
+
+        /* Test result */
+        .result-panel { margin-top: 20px; padding-top: 20px; border-top: 1px solid #e9ecef; }
+        .result-panel.hidden { display: none; }
+        .result-grid {
+            display: grid;
+            grid-template-columns: 100px 1fr;
+            gap: 11px 20px;
+            margin-bottom: 14px;
+        }
+        .result-label {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #adb5bd;
+            padding-top: 2px;
+        }
+        .result-value { font-size: 13px; font-family: monospace; color: #343a40; }
+        .status-blocked { color: #dc3545; font-weight: 700; }
+        .status-allowed { color: #28a745; font-weight: 700; }
+        .rules-result-list { background: #f8f9fa; border-radius: 8px; padding: 12px; }
+        .rule-result-item {
+            margin-bottom: 10px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #e9ecef;
+        }
+        .rule-result-item:last-child { margin-bottom: 0; padding-bottom: 0; border-bottom: none; }
+        .rule-result-domain {
+            font-family: monospace;
+            font-weight: 700;
+            font-size: 13px;
+            color: #343a40;
+            margin-bottom: 5px;
+        }
+        .slot-result {
+            padding: 4px 10px;
+            margin-top: 3px;
+            background: white;
+            border-left: 3px solid #dee2e6;
+            border-radius: 3px;
+            font-size: 12px;
+            font-family: monospace;
+        }
+        .slot-result.active-slot   { border-left-color: #28a745; color: #155724; }
+        .slot-result.inactive-slot { color: #adb5bd; }
+
+        /* Spinner */
+        .spinner-wrap { display: none; text-align: center; padding: 20px 0; color: #adb5bd; font-size: 13px; }
+        .spinner {
+            width: 26px; height: 26px;
+            border: 3px solid #dee2e6;
+            border-top-color: #667eea;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            display: inline-block;
+            margin-bottom: 8px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Collapsible */
+        .collapsible-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            user-select: none;
+            padding: 10px 0;
+            border-top: 1px solid #e9ecef;
+            margin-top: 4px;
+        }
+        .collapsible-header:hover .collapsible-title { color: #667eea; }
+        .collapsible-arrow  { font-size: 10px; color: #adb5bd; transition: transform 0.2s; }
+        .collapsible-arrow.open { transform: rotate(90deg); }
+        .collapsible-title  { font-size: 13px; font-weight: 600; color: #6c757d; transition: color 0.2s; }
+        .collapsible-body   { display: none; padding-top: 14px; }
+        .collapsible-body.open { display: block; }
+        .sandbox-note {
+            font-size: 12px;
+            color: #6c757d;
+            margin-bottom: 12px;
+            padding: 8px 12px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            border-left: 3px solid #dee2e6;
+        }
+
+        /* PIN / Manage lock */
+        .manage-lock {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 44px 20px;
+            text-align: center;
+        }
+        .lock-icon     { font-size: 42px; margin-bottom: 16px; opacity: 0.45; }
+        .lock-title    { font-size: 16px; font-weight: 600; color: #343a40; margin-bottom: 5px; }
+        .lock-subtitle { font-size: 13px; color: #adb5bd; margin-bottom: 26px; }
+        .pin-boxes     { display: flex; gap: 10px; margin-bottom: 14px; }
+
+        /* pin-box after general input rules so specificity wins */
+        input.pin-box {
+            width: 52px;
+            height: 56px;
+            text-align: center;
+            font-size: 22px;
+            font-weight: 700;
+            border: 2px solid #dee2e6;
+            border-radius: 10px;
+            padding: 0;
+            color: #343a40;
+            caret-color: #667eea;
+            background: white;
+        }
+        input.pin-box:focus { outline: none; border-color: #667eea; background: #f8f9ff; }
+        input.pin-box.error { border-color: #dc3545; animation: shake 0.35s ease; }
+        @keyframes shake {
+            0%,100% { transform: translateX(0); }
+            20%      { transform: translateX(-6px); }
+            40%      { transform: translateX(6px); }
+            60%      { transform: translateX(-4px); }
+            80%      { transform: translateX(4px); }
+        }
+        .pin-error { font-size: 13px; color: #dc3545; font-weight: 600; min-height: 20px; }
+
+        /* Manage content */
+        .section-divider { border: none; border-top: 1px solid #e9ecef; margin: 24px 0; }
+        .pause-active-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 11px 15px;
             background: #fff8e1;
-        }
-        .pause-active h3 {
-            color: #856404;
-        }
-        .pause-until {
-            font-size: 14px;
-            color: #856404;
-            margin-bottom: 12px;
+            border: 1px solid #ffe082;
+            border-radius: 8px;
+            font-size: 13px;
             font-weight: 600;
-        }
-        .button-pause {
-            background: linear-gradient(135deg, #fd7e14 0%, #e55a00 100%);
-            font-size: 13px;
-            padding: 8px 16px;
-        }
-        .button-resume {
-            background: linear-gradient(135deg, #28a745 0%, #1e7e34 100%);
-            font-size: 13px;
-            padding: 8px 18px;
+            color: #856404;
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>🧪 Distractions-Free Test Query</h1>
-        <p class="subtitle">Test whether domains would be blocked at specific times with editable config</p>
-        
-        <div class="tabs">
-            <button class="tab-button active" onclick="switchTab('test')">Test Query</button>
-            <button class="tab-button" onclick="switchTab('config')">Config</button>
-            <button class="tab-button" onclick="switchTab('status')">Status</button>
-        </div>
-        
-        <div id="testTab" class="tab-content active">
-            <div class="form-group">
-                <label for="time">Time (Format: YYYY-MM-DD HH:MM)</label>
-                <input 
-                    type="text" 
-                    id="time" 
-                    placeholder="Example: 2024-04-01 10:30"
-                    value=""
-                >
-                <div class="time-format-hint">Use 24-hour format (e.g., 2024-04-01 10:30 for April 1, 2024 at 10:30 AM)</div>
-            </div>
-            
-            <div class="form-group">
-                <label for="domain">Domain</label>
-                <input 
-                    type="text" 
-                    id="domain" 
-                    placeholder="Example: youtube.com"
-                >
-            </div>
-            
-            <div class="button-group">
-                <button onclick="submitQuery()">Test Query</button>
-                <button class="button-secondary" onclick="loadDefaultConfig()">Load Default Config</button>
-            </div>
-            
-            <div class="loading" id="loading">
-                <div class="spinner"></div>
-                <p>Running test query...</p>
-            </div>
-            
-            <div class="result-section hidden" id="resultSection">
-                <h2 style="margin-bottom: 20px; color: #333;">Query Result</h2>
-                
-                <div class="result-item">
-                    <div class="result-label">Time</div>
-                    <div class="result-value" id="resultTime">-</div>
-                </div>
-                
-                <div class="result-item">
-                    <div class="result-label">Weekday</div>
-                    <div class="result-value" id="resultWeekday">-</div>
-                </div>
-                
-                <div class="result-item">
-                    <div class="result-label">Domain</div>
-                    <div class="result-value" id="resultDomain">-</div>
-                </div>
-                
-                <div class="result-item">
-                    <div class="result-label">Status</div>
-                    <div class="result-value" id="resultStatus">-</div>
-                </div>
-                
-                <div class="result-item">
-                    <div class="result-label">DNS Response</div>
-                    <div class="result-value" id="resultDNS">-</div>
-                </div>
-                
-                <div class="result-item">
-                    <div class="result-label">Applicable Rules</div>
-                    <div class="result-value">
-                        <div class="rules-list" id="resultRules">No rules apply</div>
-                    </div>
-                </div>
-                
-                <div id="warningSection"></div>
-                <div id="errorSection"></div>
-            </div>
-        </div>
-        
-        <div id="configTab" class="tab-content">
-            <div class="form-group">
-                <label for="config">Configuration (JSON) - Editable</label>
-                <textarea
-                    id="config"
-                    placeholder="Your config will appear here"
-                ></textarea>
-                <div class="config-status" id="configStatus"></div>
-            </div>
+<div class="container">
+    <div class="app-header">
+        <h1>Distractions-Free</h1>
+        <p>Schedule-based focus enforcement</p>
+    </div>
 
-            <div class="button-group">
-                <button onclick="validateConfig()">Validate Config</button>
-                <button class="button-secondary" onclick="loadDefaultConfig()">Load Default Config</button>
-            </div>
+    <div class="tabs">
+        <button class="tab-button active" onclick="switchTab('status')">Status</button>
+        <button class="tab-button" onclick="switchTab('test')">Test</button>
+        <button class="tab-button" onclick="switchTab('manage')">Manage <span class="lock-badge" id="manageLockBadge">🔒</span></button>
+    </div>
 
-            <div id="configMessage"></div>
-            <div id="hostsPreview" style="display:none; margin-top:20px;">
-                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
-                    <span style="font-weight:600; font-size:14px; color:#333;">📄 /etc/hosts preview <span style="font-weight:400; color:#888;">(simulated — no files touched)</span></span>
-                    <span id="hostsPreviewMeta" style="font-size:12px; color:#888;"></span>
-                </div>
-                <pre id="hostsPreviewContent" style="
-                    background:#1e1e2e; color:#cdd6f4; border-radius:8px;
-                    padding:16px; font-size:13px; line-height:1.6;
-                    overflow-x:auto; white-space:pre-wrap; margin:0;
-                    border:1px solid #313244;
-                "></pre>
+    <!-- STATUS TAB -->
+    <div id="statusTab" class="tab-content active">
+        <div class="section">
+            <div class="section-header">
+                <div class="section-title">Currently Blocked</div>
+                <button class="btn-sm btn-success" onclick="loadStatus()">↻ Refresh</button>
             </div>
-
-            <div id="pfPreview" style="display:none; margin-top:20px;">
-                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
-                    <span style="font-weight:600; font-size:14px; color:#333;">🔥 pf anchor preview <span style="font-weight:400; color:#888;">(simulated — no files touched)</span></span>
-                    <span id="pfPreviewMeta" style="font-size:12px; color:#888;"></span>
-                </div>
-                <pre id="pfPreviewContent" style="
-                    background:#1e1e2e; color:#cdd6f4; border-radius:8px;
-                    padding:16px; font-size:13px; line-height:1.6;
-                    overflow-x:auto; white-space:pre-wrap; margin:0;
-                    border:1px solid #313244;
-                "></pre>
-            </div>
-        </div>
-
-        <div id="statusTab" class="tab-content">
-            <div class="status-header">
-                <h2 style="color: #333;">Currently Blocked Domains</h2>
-                <button class="button-refresh" onclick="loadStatus()">↻ Refresh</button>
-            </div>
-            <div id="enforcementBadge" style="margin-bottom: 12px;"></div>
+            <div id="modeBadge"></div>
+            <div id="pauseBanner"></div>
+            <div id="statusContent"><p style="color:#adb5bd;font-size:13px;">Loading…</p></div>
             <div class="status-meta" id="statusMeta"></div>
-            <div id="statusContent" style="margin-top: 16px;">
-                <p style="color: #999;">Loading...</p>
+        </div>
+
+        <div class="section">
+            <div class="section-title">Upcoming</div>
+            <div id="upcomingContent" class="upcoming-list">
+                <p class="upcoming-empty">Loading…</p>
             </div>
-            <div id="pausePanel" class="pause-panel" style="display:none;">
-                <h3 id="pausePanelTitle">⏸ Pause Blocking</h3>
-                <div id="pauseActive" style="display:none;">
-                    <div class="pause-until" id="pauseUntilText"></div>
-                    <button class="button-resume" onclick="resumeBlocking()">▶ Resume Now</button>
-                </div>
-                <div id="pauseInactive">
-                    <div class="button-group" style="margin-bottom:0;">
-                        <button class="button-pause" onclick="pauseBlocking(15)">15 min</button>
-                        <button class="button-pause" onclick="pauseBlocking(30)">30 min</button>
-                        <button class="button-pause" onclick="pauseBlocking(60)">1 hour</button>
-                        <button class="button-pause" onclick="pauseBlocking(120)">2 hours</button>
-                    </div>
-                </div>
-            </div>
-            <div id="pauseMessage" style="margin-top:10px;"></div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">Active Rules</div>
+            <div id="rulesContent"><p style="color:#adb5bd;font-size:13px;">Loading…</p></div>
         </div>
     </div>
-    
-    <script>
-        const defaultConfig = {
-            "settings": {
-                "primary_dns": "8.8.8.8:53",
-                "backup_dns": "1.1.1.1:53",
-                "enforcement_mode": "hosts"
-            },
-            "rules": [
-                {
-                    "domain": "youtube.com",
-                    "is_active": true,
-                    "schedules": {
-                        "Monday": [{"start": "09:00", "end": "11:00"}, {"start": "12:00", "end": "13:00"}, {"start": "14:00", "end": "17:00"}],
-                        "Tuesday": [{"start": "09:00", "end": "17:00"}],
-                        "Wednesday": [{"start": "09:00", "end": "17:00"}],
-                        "Thursday": [{"start": "09:00", "end": "17:00"}],
-                        "Friday": [{"start": "09:00", "end": "17:00"}]
-                    }
-                },
-                {
-                    "domain": "facebook.com",
-                    "is_active": true,
-                    "schedules": {
-                        "Monday": [{"start": "09:00", "end": "11:00"}, {"start": "13:00", "end": "15:00"}, {"start": "16:00", "end": "17:00"}],
-                        "Wednesday": [{"start": "09:00", "end": "12:00"}, {"start": "14:00", "end": "17:00"}],
-                        "Friday": [{"start": "09:00", "end": "12:00"}, {"start": "13:00", "end": "15:00"}]
-                    }
-                },
-                {
-                    "domain": "reddit.com",
-                    "is_active": true,
-                    "schedules": {
-                        "Monday": [{"start": "09:00", "end": "17:00"}],
-                        "Tuesday": [{"start": "09:00", "end": "17:00"}],
-                        "Thursday": [{"start": "09:00", "end": "17:00"}]
-                    }
-                },
-                {
-                    "domain": "instagram.com",
-                    "is_active": false,
-                    "schedules": {
-                        "Saturday": [{"start": "10:00", "end": "20:00"}],
-                        "Sunday": [{"start": "10:00", "end": "20:00"}]
-                    }
-                },
-                {
-                    "domain": "twitter.com",
-                    "is_active": true,
-                    "schedules": {
-                        "Monday": [{"start": "09:00", "end": "11:00"}, {"start": "13:00", "end": "15:00"}, {"start": "16:00", "end": "17:00"}],
-                        "Tuesday": [{"start": "09:00", "end": "17:30"}],
-                        "Wednesday": [{"start": "09:00", "end": "17:30"}],
-                        "Thursday": [{"start": "09:00", "end": "17:30"}],
-                        "Friday": [{"start": "09:00", "end": "16:00"}]
-                    }
-                },
-                {
-                    "domain": "linkedin.com",
-                    "is_active": true,
-                    "schedules": {
-                        "Monday": [{"start": "08:30", "end": "09:00"}, {"start": "17:30", "end": "18:00"}],
-                        "Tuesday": [{"start": "12:00", "end": "13:00"}],
-                        "Friday": [{"start": "16:00", "end": "17:30"}]
-                    }
-                }
-            ]
-        };
 
-        const validWeekdays = [
-            "Monday",
-            "Tuesday",
-            "Wednesday",
-            "Thursday",
-            "Friday",
-            "Saturday",
-            "Sunday"
-        ];
+    <!-- TEST TAB -->
+    <div id="testTab" class="tab-content">
+        <div class="section">
+            <div class="section-title">Test Query</div>
+            <div class="input-row">
+                <div class="form-group">
+                    <label for="testTime">Time</label>
+                    <input type="text" id="testTime" placeholder="2026-04-26 14:35">
+                    <div class="field-hint">YYYY-MM-DD HH:MM (24-hour)</div>
+                </div>
+                <div class="form-group">
+                    <label for="testDomain">Domain</label>
+                    <input type="text" id="testDomain" placeholder="youtube.com">
+                </div>
+            </div>
+            <button onclick="runTestQuery()">Run Query</button>
+        </div>
 
-        let currentConfig = defaultConfig;
-        let lastValidConfigText = JSON.stringify(defaultConfig, null, 2);
-        let authToken = '';
+        <div class="spinner-wrap" id="testSpinner">
+            <div class="spinner"></div>
+            <p>Running query…</p>
+        </div>
 
-        window.onload = async function() {
-            setConfigTextarea(defaultConfig);
-            await loadConfig();
-            setDefaultTime();
-        };
-        
-        function switchTab(tab) {
-            document.getElementById('testTab').classList.remove('active');
-            document.getElementById('configTab').classList.remove('active');
-            document.getElementById('statusTab').classList.remove('active');
-            document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+        <div class="result-panel hidden" id="resultPanel">
+            <div class="section-title">Result</div>
+            <div class="result-grid">
+                <div class="result-label">Time</div>    <div class="result-value" id="rTime"></div>
+                <div class="result-label">Weekday</div> <div class="result-value" id="rWeekday"></div>
+                <div class="result-label">Domain</div>  <div class="result-value" id="rDomain"></div>
+                <div class="result-label">Status</div>  <div class="result-value" id="rStatus"></div>
+                <div class="result-label">DNS</div>     <div class="result-value" id="rDNS"></div>
+                <div class="result-label">Rules</div>
+                <div class="result-value">
+                    <div class="rules-result-list" id="rRules"></div>
+                </div>
+            </div>
+            <div id="rWarning"></div>
+            <div id="rError"></div>
+        </div>
 
-            if (tab === 'test') {
-                document.getElementById('testTab').classList.add('active');
-                document.querySelectorAll('.tab-button')[0].classList.add('active');
-            } else if (tab === 'config') {
-                document.getElementById('configTab').classList.add('active');
-                document.querySelectorAll('.tab-button')[1].classList.add('active');
-            } else {
-                document.getElementById('statusTab').classList.add('active');
-                document.querySelectorAll('.tab-button')[2].classList.add('active');
-                loadStatus();
+        <!-- Custom config collapsible -->
+        <div class="collapsible-header" onclick="toggleCustomConfig()">
+            <span class="collapsible-arrow" id="customArrow">▶</span>
+            <span class="collapsible-title">Use custom config for testing</span>
+        </div>
+        <div class="collapsible-body" id="customBody">
+            <div class="sandbox-note">Changes here only affect test queries — the live service is not modified.</div>
+            <div class="form-group">
+                <label for="testConfig">Config JSON</label>
+                <textarea id="testConfig"></textarea>
+                <div class="config-status" id="testConfigStatus"></div>
+            </div>
+            <div class="button-group">
+                <button onclick="applyTestConfig()">Use this config</button>
+                <button class="btn-secondary" onclick="resetTestConfig()">Reset to live</button>
+                <button class="btn-secondary btn-sm" onclick="loadExampleConfig()">Load example</button>
+            </div>
+            <div id="testConfigMsg"></div>
+            <div class="preview-panel" id="testHostsPanel">
+                <div class="preview-header">
+                    <span class="preview-title">/etc/hosts preview <span>(simulated — no files touched)</span></span>
+                    <span class="preview-meta" id="testHostsMeta"></span>
+                </div>
+                <pre class="preview-code" id="testHostsCode"></pre>
+            </div>
+            <div class="preview-panel" id="testPFPanel">
+                <div class="preview-header">
+                    <span class="preview-title">pf anchor preview <span>(simulated — no files touched)</span></span>
+                    <span class="preview-meta" id="testPFMeta"></span>
+                </div>
+                <pre class="preview-code" id="testPFCode"></pre>
+            </div>
+        </div>
+    </div>
+
+    <!-- MANAGE TAB -->
+    <div id="manageTab" class="tab-content">
+        <!-- Lock overlay -->
+        <div id="manageLock" class="manage-lock">
+            <div class="lock-icon">🔒</div>
+            <div class="lock-title">Enter PIN to unlock</div>
+            <div class="lock-subtitle">Enter the current time as HHMM</div>
+            <div class="pin-boxes">
+                <input type="password" class="pin-box" maxlength="1" inputmode="numeric" pattern="[0-9]">
+                <input type="password" class="pin-box" maxlength="1" inputmode="numeric" pattern="[0-9]">
+                <input type="password" class="pin-box" maxlength="1" inputmode="numeric" pattern="[0-9]">
+                <input type="password" class="pin-box" maxlength="1" inputmode="numeric" pattern="[0-9]">
+            </div>
+            <div class="pin-error" id="pinError"></div>
+        </div>
+
+        <!-- Manage content (hidden until PIN accepted) -->
+        <div id="manageContent" style="display:none;">
+            <div class="section">
+                <div class="section-title">Update Config</div>
+                <div class="form-group">
+                    <textarea id="manageConfig"></textarea>
+                    <div class="config-status" id="manageConfigStatus"></div>
+                </div>
+                <div class="button-group">
+                    <button onclick="saveConfig()">Save to live service</button>
+                    <button class="btn-secondary" onclick="resetManageConfig()">Discard changes</button>
+                </div>
+                <div id="manageConfigMsg"></div>
+                <div class="preview-panel" id="manageHostsPanel">
+                    <div class="preview-header">
+                        <span class="preview-title">/etc/hosts preview <span>(simulated — no files touched)</span></span>
+                        <span class="preview-meta" id="manageHostsMeta"></span>
+                    </div>
+                    <pre class="preview-code" id="manageHostsCode"></pre>
+                </div>
+                <div class="preview-panel" id="managePFPanel">
+                    <div class="preview-header">
+                        <span class="preview-title">pf anchor preview <span>(simulated — no files touched)</span></span>
+                        <span class="preview-meta" id="managePFMeta"></span>
+                    </div>
+                    <pre class="preview-code" id="managePFCode"></pre>
+                </div>
+            </div>
+
+            <hr class="section-divider">
+
+            <div class="section">
+                <div class="section-title">Pause Blocking</div>
+                <div id="managePauseContent"><p style="color:#adb5bd;font-size:13px;">Loading…</p></div>
+                <div id="managePauseMsg"></div>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+// ── State ─────────────────────────────────────────────────────────────────────
+var liveConfig         = null;   // config from server
+var testConfig         = null;   // config used for test queries
+var useCustomTestConfig = false;
+var authToken          = '';
+var manageUnlocked     = false;
+
+var WEEKDAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+
+var EXAMPLE_CONFIG = {
+    "settings": {"primary_dns": "8.8.8.8:53", "backup_dns": "1.1.1.1:53", "enforcement_mode": "hosts"},
+    "rules": [
+        {"domain": "youtube.com", "is_active": true, "schedules": {
+            "Monday":    [{"start":"09:00","end":"17:00"}],
+            "Tuesday":   [{"start":"09:00","end":"17:00"}],
+            "Wednesday": [{"start":"09:00","end":"17:00"}],
+            "Thursday":  [{"start":"09:00","end":"17:00"}],
+            "Friday":    [{"start":"09:00","end":"17:00"}]
+        }},
+        {"domain": "instagram.com", "is_active": true, "schedules": {
+            "Monday":    [{"start":"09:00","end":"11:00"},{"start":"13:00","end":"17:00"}],
+            "Tuesday":   [{"start":"09:00","end":"17:00"}],
+            "Wednesday": [{"start":"09:00","end":"17:00"}],
+            "Thursday":  [{"start":"09:00","end":"17:00"}],
+            "Friday":    [{"start":"09:00","end":"15:00"}]
+        }},
+        {"domain": "reddit.com", "is_active": true, "schedules": {
+            "Monday":  [{"start":"09:00","end":"17:00"}],
+            "Tuesday": [{"start":"09:00","end":"17:00"}],
+            "Thursday":[{"start":"09:00","end":"17:00"}]
+        }},
+        {"domain": "twitter.com", "is_active": false, "schedules": {
+            "Saturday": [{"start":"10:00","end":"20:00"}],
+            "Sunday":   [{"start":"10:00","end":"20:00"}]
+        }}
+    ]
+};
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+window.onload = function() {
+    setupPinBoxes();
+    setDefaultTestTime();
+    loadConfig().then(function() { loadStatus(); });
+};
+
+async function loadConfig() {
+    try {
+        var res = await fetch('/api/config');
+        var cfg = await res.json();
+        if (cfg.settings && cfg.settings.auth_token) {
+            authToken = cfg.settings.auth_token;
+        }
+        liveConfig = cfg;
+        testConfig = cfg;
+        document.getElementById('testConfig').value = JSON.stringify(cfg, null, 2);
+        document.getElementById('manageConfig').value = JSON.stringify(cfg, null, 2);
+        validateField('testConfig',   'testConfigStatus');
+        validateField('manageConfig', 'manageConfigStatus');
+    } catch (e) {
+        liveConfig = EXAMPLE_CONFIG;
+        testConfig = EXAMPLE_CONFIG;
+    }
+}
+
+// ── Tab switching ─────────────────────────────────────────────────────────────
+function switchTab(tab) {
+    ['status','test','manage'].forEach(function(t) {
+        document.getElementById(t + 'Tab').classList.remove('active');
+    });
+    document.querySelectorAll('.tab-button').forEach(function(b) {
+        b.classList.remove('active');
+    });
+    document.getElementById(tab + 'Tab').classList.add('active');
+    var idx = {status: 0, test: 1, manage: 2}[tab];
+    document.querySelectorAll('.tab-button')[idx].classList.add('active');
+
+    if (tab === 'status') { loadStatus(); }
+    if (tab === 'manage' && !manageUnlocked) {
+        setTimeout(function() {
+            var first = document.querySelectorAll('.pin-box')[0];
+            if (first) first.focus();
+        }, 80);
+    }
+}
+
+// ── Shared: config validation ─────────────────────────────────────────────────
+var VALID_DAYS = {Monday:1,Tuesday:1,Wednesday:1,Thursday:1,Friday:1,Saturday:1,Sunday:1};
+
+function parseAndValidate(text) {
+    if (!text) return {valid: false, error: 'Config is empty'};
+    var parsed;
+    try { parsed = JSON.parse(text); } catch(e) { return {valid: false, error: 'Invalid JSON: ' + e.message}; }
+    if (!parsed || typeof parsed !== 'object') return {valid: false, error: 'Config must be an object'};
+    if (!Array.isArray(parsed.rules))           return {valid: false, error: 'Config must have a rules array'};
+    for (var i = 0; i < parsed.rules.length; i++) {
+        var rule = parsed.rules[i];
+        if (!rule.domain) return {valid: false, error: 'Each rule must have a domain'};
+        if (typeof rule.is_active !== 'boolean') return {valid: false, error: rule.domain + ': is_active must be boolean'};
+        if (!rule.schedules || typeof rule.schedules !== 'object') return {valid: false, error: rule.domain + ': missing schedules'};
+        var days = Object.keys(rule.schedules);
+        for (var j = 0; j < days.length; j++) {
+            var day = days[j];
+            if (!VALID_DAYS[day]) return {valid: false, error: 'Invalid day: ' + day};
+            var slots = rule.schedules[day];
+            if (!Array.isArray(slots) || slots.length === 0) return {valid: false, error: rule.domain + '/' + day + ': needs at least one slot'};
+            for (var k = 0; k < slots.length; k++) {
+                var s = slots[k];
+                if (!s.start || !s.end) return {valid: false, error: rule.domain + '/' + day + ': slots need start and end'};
+                if (s.start >= s.end)   return {valid: false, error: rule.domain + '/' + day + ': start must be before end'};
             }
         }
+    }
+    return {valid: true, config: parsed};
+}
 
-        async function loadStatus() {
-            const contentEl = document.getElementById('statusContent');
-            const metaEl = document.getElementById('statusMeta');
-            contentEl.innerHTML = '<p style="color: #999;">Loading...</p>';
-            metaEl.textContent = '';
-            try {
-                const response = await fetch('/api/status', {
-                    method: 'POST',
-                    headers: {
-                        'X-Auth-Token': authToken,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(currentConfig)
-                });
-                if (!response.ok) {
-                    contentEl.innerHTML = '<div class="error-banner">Failed to load status (is the service running?)</div>';
-                    return;
-                }
-                const data = await response.json();
-                const blocked = data.blocked_domains || {};
-                const domains = Object.keys(blocked).filter(k => blocked[k]);
+function validateField(fieldId, statusId) {
+    var text = document.getElementById(fieldId).value.trim();
+    var el   = document.getElementById(statusId);
+    var v    = parseAndValidate(text);
+    if (v.valid) {
+        el.textContent = '✓ Valid';
+        el.className   = 'config-status valid';
+    } else {
+        el.textContent = '✗ ' + v.error;
+        el.className   = 'config-status invalid';
+    }
+    return v.valid;
+}
 
-                const modeLabels = {
-                    hosts:  { text: 'Standard (hosts file)',     color: '#28a745' },
-                    dns:    { text: 'DNS Proxy',                  color: '#007bff' },
-                    strict: { text: 'Strict (DNS + Firewall)',    color: '#dc3545' },
-                };
-                const mode = data.enforcement_mode || 'hosts';
-                const label = modeLabels[mode] || { text: mode, color: '#6c757d' };
-                document.getElementById('enforcementBadge').innerHTML =
-                    '<span style="display:inline-block;padding:4px 12px;border-radius:12px;font-size:13px;font-weight:600;color:#fff;background:' + label.color + '">⚙ ' + label.text + '</span>';
+function showBanner(targetId, type, msg) {
+    var el = document.getElementById(targetId);
+    el.innerHTML = '<div class="banner ' + type + '">' + msg + '</div>';
+}
 
-                if (data.last_evaluated) {
-                    const d = new Date(data.last_evaluated);
-                    metaEl.textContent = 'Last evaluated: ' + (isNaN(d) ? data.last_evaluated : d.toLocaleString());
-                }
-
-                if (domains.length === 0) {
-                    contentEl.innerHTML = '<p class="status-empty">✅ No domains are currently blocked.</p>';
-                } else {
-                    const items = domains.map(d => '<li>' + d + '</li>').join('');
-                    contentEl.innerHTML = '<ul class="blocked-list">' + items + '</ul>';
-                }
-
-                // Render pause panel.
-                const panel = document.getElementById('pausePanel');
-                panel.style.display = 'block';
-                if (data.paused && data.paused_until) {
-                    const until = new Date(data.paused_until);
-                    panel.classList.add('pause-active');
-                    document.getElementById('pausePanelTitle').textContent = '⏸ Blocking Paused';
-                    document.getElementById('pauseUntilText').textContent =
-                        'Blocking paused until ' + until.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
-                    document.getElementById('pauseActive').style.display = 'block';
-                    document.getElementById('pauseInactive').style.display = 'none';
-                } else {
-                    panel.classList.remove('pause-active');
-                    document.getElementById('pausePanelTitle').textContent = '⏸ Pause Blocking';
-                    document.getElementById('pauseActive').style.display = 'none';
-                    document.getElementById('pauseInactive').style.display = 'block';
-                }
-            } catch (err) {
-                contentEl.innerHTML = '<div class="error-banner">Error fetching status: ' + err.message + '</div>';
-            }
-        }
-
-        async function pauseBlocking(minutes) {
-            const msgEl = document.getElementById('pauseMessage');
-            try {
-                const res = await fetch('/api/pause', {
-                    method: 'POST',
-                    headers: { 'X-Auth-Token': authToken, 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ minutes })
-                });
-                const data = await res.json();
-                if (!res.ok) {
-                    msgEl.innerHTML = '<div class="error-banner">' + (data.error || 'Failed to pause') + '</div>';
-                    return;
-                }
-                const until = new Date(data.paused_until);
-                msgEl.innerHTML = '<div class="success-banner">⏸ Blocking paused until ' +
-                    until.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) + '</div>';
-                await loadStatus();
-            } catch (err) {
-                msgEl.innerHTML = '<div class="error-banner">Error: ' + err.message + '</div>';
-            }
-        }
-
-        async function resumeBlocking() {
-            const msgEl = document.getElementById('pauseMessage');
-            try {
-                const res = await fetch('/api/pause', {
-                    method: 'DELETE',
-                    headers: { 'X-Auth-Token': authToken }
-                });
-                const data = await res.json();
-                if (!res.ok) {
-                    msgEl.innerHTML = '<div class="error-banner">' + (data.error || 'Failed to resume') + '</div>';
-                    return;
-                }
-                msgEl.innerHTML = '<div class="success-banner">▶ Blocking resumed.</div>';
-                await loadStatus();
-            } catch (err) {
-                msgEl.innerHTML = '<div class="error-banner">Error: ' + err.message + '</div>';
-            }
-        }
-        
-        function isValidWeekday(day) {
-            return validWeekdays.includes(day);
-        }
-
-        function parseAndValidateConfig(configText) {
-            if (!configText) {
-                return { valid: false, error: 'Config is empty' };
-            }
-
-            let parsed;
-            try {
-                parsed = JSON.parse(configText);
-            } catch (error) {
-                return { valid: false, error: 'Invalid JSON: ' + error.message };
-            }
-
-            if (!parsed || typeof parsed !== 'object') {
-                return { valid: false, error: 'Config must be a JSON object' };
-            }
-
-            if (!parsed.rules || !Array.isArray(parsed.rules)) {
-                return { valid: false, error: 'Config must contain a rules array' };
-            }
-
-            for (const rule of parsed.rules) {
-                if (!rule.domain || typeof rule.domain !== 'string') {
-                    return { valid: false, error: 'Each rule must include a domain string' };
-                }
-                if (typeof rule.is_active !== 'boolean') {
-                    return { valid: false, error: 'Each rule must include is_active boolean' };
-                }
-                if (!rule.schedules || typeof rule.schedules !== 'object') {
-                    return { valid: false, error: 'Rule ' + rule.domain + ' must include schedules object' };
-                }
-                for (const day of Object.keys(rule.schedules)) {
-                    if (!isValidWeekday(day)) {
-                        return { valid: false, error: 'Invalid schedule day: ' + day };
-                    }
-                    const slots = rule.schedules[day];
-                    if (!Array.isArray(slots) || slots.length === 0) {
-                        return { valid: false, error: 'Schedules for ' + day + ' must be an array of time slots' };
-                    }
-                    for (const slot of slots) {
-                        if (!slot || typeof slot !== 'object' || typeof slot.start !== 'string' || typeof slot.end !== 'string') {
-                            return { valid: false, error: 'Each schedule slot for ' + rule.domain + ' on ' + day + ' must include start and end strings' };
-                        }
-                        if (slot.start >= slot.end) {
-                            return { valid: false, error: 'Schedule slot start time must be before end time for ' + rule.domain + ' on ' + day };
-                        }
-                    }
-                }
-            }
-
-            return { valid: true, config: parsed };
-        }
-
-        async function loadConfig() {
-            setConfigTextarea(defaultConfig);
-            try {
-                const response = await fetch('/api/config');
-                const config = await response.json();
-                if (config.settings && config.settings.auth_token) {
-                    authToken = config.settings.auth_token;
-                }
-                const parsedText = JSON.stringify(config, null, 2);
-                const validation = parseAndValidateConfig(parsedText);
-                if (validation.valid) {
-                    setConfigTextarea(validation.config);
-                    showConfigMessage('✅ Loaded config from server', 'success');
-                } else {
-                    showConfigMessage('⚠️ Server config invalid, using default config: ' + validation.error, 'error');
-                }
-            } catch (error) {
-                console.error('Error loading config:', error);
-                loadDefaultConfig();
-            }
-        }
-
-        function loadDefaultConfig() {
-            setConfigTextarea(defaultConfig);
-            showConfigMessage('✅ Default config loaded', 'success');
-        }
-
-        function setConfigTextarea(configObject) {
-            currentConfig = configObject;
-            lastValidConfigText = JSON.stringify(configObject, null, 2);
-            document.getElementById('config').value = lastValidConfigText;
-            validateConfigSilent();
-        }
-
-        async function validateConfig() {
-            const configText = document.getElementById('config').value.trim();
-            const statusEl = document.getElementById('configStatus');
-            const messageEl = document.getElementById('configMessage');
-            const previewEl = document.getElementById('hostsPreview');
-            const validation = parseAndValidateConfig(configText);
-
-            if (!validation.valid) {
-                statusEl.textContent = '❌ ' + validation.error;
-                statusEl.className = 'config-status invalid';
-                messageEl.innerHTML = '<div class="error-banner">' + validation.error + '</div>';
-                previewEl.style.display = 'none';
-                return false;
-            }
-
-            currentConfig = validation.config;
-            lastValidConfigText = JSON.stringify(validation.config, null, 2);
-            statusEl.textContent = '✅ Config is valid';
-            statusEl.className = 'config-status valid';
-            messageEl.innerHTML = '<div class="success-banner">✅ Edited config accepted and will be used for test queries.</div>';
-
-            await refreshHostsPreview();
-            await refreshPFPreview();
-            return true;
-        }
-
-        async function refreshHostsPreview() {
-            const previewEl = document.getElementById('hostsPreview');
-            const contentEl = document.getElementById('hostsPreviewContent');
-            const metaEl = document.getElementById('hostsPreviewMeta');
-
-            try {
-                const res = await fetch('/api/hosts-preview', {
-                    method: 'POST',
-                    headers: { 'X-Auth-Token': authToken, 'Content-Type': 'application/json' },
-                    body: JSON.stringify(currentConfig)
-                });
-                if (!res.ok) { previewEl.style.display = 'none'; return; }
-                const data = await res.json();
-
-                const mode = data.enforcement_mode || 'hosts';
-                const entries = data.hosts_entries || [];
-                const domains = data.blocked_domains || [];
-                const evalAt = data.evaluated_at ? new Date(data.evaluated_at).toLocaleTimeString() : '';
-
-                if (mode !== 'hosts') {
-                    previewEl.style.display = 'none';
-                    return;
-                }
-
-                previewEl.style.display = 'block';
-                metaEl.textContent = 'evaluated at ' + evalAt;
-
-                if (entries.length === 0) {
-                    contentEl.textContent = '# No domains are currently in a block window.\n# /etc/hosts will have no managed entries right now.';
-                } else {
-                    const lines = [
-                        '# distractions-free:begin',
-                        ...entries,
-                        '# distractions-free:end',
-                        '',
-                        '# ' + domains.length + ' domain(s) blocked · ' + entries.length + ' host entries'
-                    ];
-                    contentEl.textContent = lines.join('\n');
-                }
-            } catch (e) {
-                previewEl.style.display = 'none';
-            }
-        }
-
-        async function refreshPFPreview() {
-            const previewEl = document.getElementById('pfPreview');
-            const contentEl = document.getElementById('pfPreviewContent');
-            const metaEl = document.getElementById('pfPreviewMeta');
-
-            const mode = (currentConfig && currentConfig.settings && currentConfig.settings.enforcement_mode) || 'hosts';
-            if (mode !== 'strict') {
-                previewEl.style.display = 'none';
-                return;
-            }
-
-            try {
-                const res = await fetch('/api/pf-preview', {
-                    method: 'POST',
-                    headers: { 'X-Auth-Token': authToken, 'Content-Type': 'application/json' },
-                    body: JSON.stringify(currentConfig)
-                });
-                if (!res.ok) { previewEl.style.display = 'none'; return; }
-                const data = await res.json();
-                if (data.error) { previewEl.style.display = 'none'; return; }
-
-                const domains = data.domains || [];
-                const resolvedIPs = data.resolved_ips || {};
-                const anchorContent = data.anchor_content || '';
-
-                previewEl.style.display = 'block';
-                metaEl.textContent = domains.length + ' domain(s)';
-
-                if (domains.length === 0) {
-                    contentEl.textContent = '# No domains are currently in a block window.\n# pf anchor will have no entries right now.';
-                    return;
-                }
-
-                const ipLines = domains.map(d => {
-                    const ips = (resolvedIPs[d] || []).join(', ') || 'no IPs resolved';
-                    return '# ' + d + ' → ' + ips;
-                });
-                contentEl.textContent = ipLines.join('\n') + '\n\n' + anchorContent;
-            } catch (e) {
-                previewEl.style.display = 'none';
-            }
-        }
-
-        function validateConfigSilent() {
-            const configText = document.getElementById('config').value.trim();
-            const statusEl = document.getElementById('configStatus');
-            const validation = parseAndValidateConfig(configText);
-
-            if (!validation.valid) {
-                statusEl.textContent = '❌ ' + validation.error;
-                statusEl.className = 'config-status invalid';
-                return false;
-            }
-
-            currentConfig = validation.config;
-            lastValidConfigText = JSON.stringify(validation.config, null, 2);
-            statusEl.textContent = '✅ Valid config';
-            statusEl.className = 'config-status valid';
-            return true;
-        }
-
-        function showConfigMessage(message, type) {
-            const messageEl = document.getElementById('configMessage');
-            if (type === 'success') {
-                messageEl.innerHTML = '<div class="success-banner">' + message + '</div>';
-            } else {
-                messageEl.innerHTML = '<div class="error-banner">' + message + '</div>';
-            }
-        }
-        
-        function setDefaultTime() {
-            const now = new Date();
-            const year = now.getFullYear();
-            const month = String(now.getMonth() + 1).padStart(2, '0');
-            const day = String(now.getDate()).padStart(2, '0');
-            const hours = String(now.getHours()).padStart(2, '0');
-            const minutes = String(now.getMinutes()).padStart(2, '0');
-            const timeStr = year + '-' + month + '-' + day + ' ' + hours + ':' + minutes;
-            document.getElementById('time').value = timeStr;
-        }
-        
-        async function submitQuery() {
-            const time = document.getElementById('time').value.trim();
-            const domain = document.getElementById('domain').value.trim();
-            const configText = document.getElementById('config').value.trim();
-            
-            if (!time || !domain) {
-                alert('Please enter both time and domain');
-                return;
-            }
-            
-            const isValid = validateConfigSilent();
-            if (isValid) {
-                showConfigMessage('✅ Edited config accepted and will be used for this query.', 'success');
-            } else {
-                showConfigMessage('⚠️ Invalid config detected. Using last valid configuration for this query.', 'error');
-            }
-            
-            document.getElementById('loading').style.display = 'block';
-            document.getElementById('resultSection').classList.add('hidden');
-            
-            try {
-                const formData = new FormData();
-                formData.append('config', JSON.stringify(currentConfig, null, 2));
-                formData.append('time', time);
-                formData.append('domain', domain);
-                
-                const url = '/api/test-query?time=' + encodeURIComponent(time) +
-                           '&domain=' + encodeURIComponent(domain);
-                const response = await fetch(url, {
-                    method: 'POST',
-                    headers: { 'X-Auth-Token': authToken },
-                    body: formData
-                });
-                const result = await response.json();
-                
-                displayResult(result);
-            } catch (error) {
-                console.error('Error:', error);
-                alert('Error running query: ' + error.message);
-            } finally {
-                document.getElementById('loading').style.display = 'none';
-            }
-        }
-        
-        function displayResult(result) {
-            document.getElementById('resultTime').textContent = result.time;
-            document.getElementById('resultWeekday').textContent = result.weekday;
-            document.getElementById('resultDomain').textContent = result.domain;
-            
-            if (result.error) {
-                const errorSection = document.getElementById('errorSection');
-                errorSection.innerHTML = '<div class="error-banner">' + result.error + '</div>';
-                document.getElementById('resultSection').classList.remove('hidden');
-                return;
-            }
-            
-            // Set status
-            const statusEl = document.getElementById('resultStatus');
-            if (result.is_blocked) {
-                statusEl.innerHTML = '<span class="status-blocked">' + result.blocking_status + '</span>';
-            } else {
-                statusEl.innerHTML = '<span class="status-allowed">' + result.blocking_status + '</span>';
-            }
-            
-            document.getElementById('resultDNS').textContent = result.dns_response;
-            
-            // Display rules
-            const rulesEl = document.getElementById('resultRules');
-            if (result.applicable_rules && result.applicable_rules.length > 0) {
-                let rulesHTML = '';
-                for (const rule of result.applicable_rules) {
-                    rulesHTML += '<div class="rule-item"><strong>' + rule.domain + '</strong>';
-                    for (const schedule of rule.schedules) {
-                        const activeClass = schedule.is_active ? 'schedule-active' : 'schedule-inactive';
-                        const activeText = schedule.is_active ? '✓ ACTIVE' : '○ Not active';
-                        rulesHTML += '<div class="schedule-slot ' + activeClass + '">' +
-                                    activeText + ': ' + schedule.weekday + ' ' + 
-                                    schedule.start + '-' + schedule.end + '</div>';
-                    }
-                    rulesHTML += '</div>';
-                }
-                rulesEl.innerHTML = rulesHTML;
-            } else {
-                rulesEl.innerHTML = 'No rules apply';
-            }
-            
-            // Display warning
-            const warningEl = document.getElementById('warningSection');
-            if (result.has_warning) {
-                warningEl.innerHTML = '<div class="warning-banner">' + result.warning_message + '</div>';
-            } else {
-                warningEl.innerHTML = '';
-            }
-            
-            document.getElementById('resultSection').classList.remove('hidden');
-            
-            // Switch to test tab
-            switchTab('test');
-        }
-        
-        // Validate config while typing
-        document.addEventListener('DOMContentLoaded', function() {
-            document.getElementById('config').addEventListener('input', validateConfigSilent);
+// ── Shared: preview fetches ───────────────────────────────────────────────────
+async function fetchHostsPreview(cfg, panelId, codeId, metaId) {
+    var panel = document.getElementById(panelId);
+    try {
+        var res = await fetch('/api/hosts-preview', {
+            method: 'POST',
+            headers: {'X-Auth-Token': authToken, 'Content-Type': 'application/json'},
+            body: JSON.stringify(cfg)
         });
-        
-        // Allow Enter key to submit
-        document.addEventListener('keypress', function(e) {
-            if (e.key === 'Enter' && (e.target.id === 'time' || e.target.id === 'domain')) {
-                submitQuery();
+        if (!res.ok) { panel.style.display = 'none'; return; }
+        var data = await res.json();
+        if (data.enforcement_mode !== 'hosts') { panel.style.display = 'none'; return; }
+        panel.style.display = 'block';
+        document.getElementById(metaId).textContent = 'evaluated at ' + new Date(data.evaluated_at).toLocaleTimeString();
+        var entries = data.hosts_entries || [];
+        if (entries.length === 0) {
+            document.getElementById(codeId).textContent = '# No domains in a block window right now.\n# /etc/hosts would have no managed entries.';
+        } else {
+            var lines = ['# distractions-free:begin'].concat(entries).concat(['# distractions-free:end', '',
+                '# ' + (data.blocked_domains||[]).length + ' domain(s) blocked · ' + entries.length + ' host entries']);
+            document.getElementById(codeId).textContent = lines.join('\n');
+        }
+    } catch(e) { panel.style.display = 'none'; }
+}
+
+async function fetchPFPreview(cfg, panelId, codeId, metaId) {
+    var panel = document.getElementById(panelId);
+    var mode  = cfg && cfg.settings && cfg.settings.enforcement_mode;
+    if (mode !== 'strict') { panel.style.display = 'none'; return; }
+    try {
+        var res = await fetch('/api/pf-preview', {
+            method: 'POST',
+            headers: {'X-Auth-Token': authToken, 'Content-Type': 'application/json'},
+            body: JSON.stringify(cfg)
+        });
+        if (!res.ok) { panel.style.display = 'none'; return; }
+        var data = await res.json();
+        if (data.error) { panel.style.display = 'none'; return; }
+        panel.style.display = 'block';
+        var domains = data.domains || [];
+        document.getElementById(metaId).textContent = domains.length + ' domain(s)';
+        if (domains.length === 0) {
+            document.getElementById(codeId).textContent = '# No domains in a block window right now.';
+        } else {
+            var resolved = data.resolved_ips || {};
+            var ipLines  = domains.map(function(d) { return '# ' + d + ' → ' + ((resolved[d]||[]).join(', ') || 'no IPs resolved'); });
+            document.getElementById(codeId).textContent = ipLines.join('\n') + '\n\n' + (data.anchor_content || '');
+        }
+    } catch(e) { panel.style.display = 'none'; }
+}
+
+// ── Status tab ────────────────────────────────────────────────────────────────
+async function loadStatus() {
+    var contentEl = document.getElementById('statusContent');
+    contentEl.innerHTML = '<p style="color:#adb5bd;font-size:13px;">Loading…</p>';
+    try {
+        var res = await fetch('/api/status', {
+            method: 'POST',
+            headers: {'X-Auth-Token': authToken, 'Content-Type': 'application/json'},
+            body: JSON.stringify(liveConfig || {})
+        });
+        if (!res.ok) {
+            contentEl.innerHTML = '<div class="banner error">Failed to load status — is the service running?</div>';
+            return;
+        }
+        var data = await res.json();
+
+        // Mode badge
+        var modes = {
+            hosts:  {label: 'Standard (hosts file)',   cls: 'hosts'},
+            dns:    {label: 'DNS Proxy',                cls: 'dns'},
+            strict: {label: 'Strict (DNS + Firewall)',  cls: 'strict'}
+        };
+        var mode = data.enforcement_mode || 'hosts';
+        var m = modes[mode] || {label: mode, cls: 'hosts'};
+        document.getElementById('modeBadge').innerHTML =
+            '<div class="mode-badge ' + m.cls + '">⚙ ' + m.label + '</div>';
+
+        // Pause banner
+        var pauseEl = document.getElementById('pauseBanner');
+        if (data.paused && data.paused_until) {
+            var until = new Date(data.paused_until);
+            var fmt   = until.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+            pauseEl.innerHTML = '<div class="pause-banner">⏸ Blocking paused until ' + fmt + '</div>';
+        } else {
+            pauseEl.innerHTML = '';
+        }
+
+        // Blocked list
+        var blocked = Object.keys(data.blocked_domains || {}).filter(function(k) { return data.blocked_domains[k]; });
+        if (blocked.length === 0) {
+            contentEl.innerHTML = '<div class="status-empty">✓ No domains currently blocked</div>';
+        } else {
+            contentEl.innerHTML = '<ul class="blocked-list">' +
+                blocked.map(function(d) {
+                    return '<li class="blocked-item"><span class="blocked-dot"></span>' + d + '</li>';
+                }).join('') + '</ul>';
+        }
+
+        // Last evaluated
+        if (data.last_evaluated) {
+            var d2 = new Date(data.last_evaluated);
+            document.getElementById('statusMeta').textContent =
+                'Last evaluated: ' + (isNaN(d2) ? data.last_evaluated : d2.toLocaleString());
+        }
+
+        // Reload config and refresh derived views
+        await loadConfig();
+        renderUpcoming(liveConfig);
+        renderRulesSummary(liveConfig);
+
+        // Sync manage pause panel if already unlocked
+        if (manageUnlocked) renderManagePause(data);
+
+    } catch(e) {
+        contentEl.innerHTML = '<div class="banner error">Error: ' + e.message + '</div>';
+    }
+}
+
+// ── Upcoming events ───────────────────────────────────────────────────────────
+function computeUpcoming(cfg, now, maxEvents, hoursAhead) {
+    maxEvents  = maxEvents  || 10;
+    hoursAhead = hoursAhead || 24;
+    if (!cfg || !cfg.rules) return [];
+    var cutoff = new Date(now.getTime() + hoursAhead * 3600000);
+    var events = [];
+
+    for (var i = 0; i < cfg.rules.length; i++) {
+        var rule = cfg.rules[i];
+        if (!rule.is_active) continue;
+        for (var offset = 0; offset <= 1; offset++) {
+            var day     = new Date(now);
+            day.setDate(day.getDate() + offset);
+            var weekday = WEEKDAYS[day.getDay()];
+            var slots   = rule.schedules && rule.schedules[weekday];
+            if (!slots) continue;
+
+            for (var k = 0; k < slots.length; k++) {
+                var slot = slots[k];
+                var sp   = slot.start.split(':');
+                var ep   = slot.end.split(':');
+
+                var tStart = new Date(day);
+                tStart.setHours(parseInt(sp[0], 10), parseInt(sp[1], 10), 0, 0);
+
+                var tEnd = new Date(day);
+                tEnd.setHours(parseInt(ep[0], 10), parseInt(ep[1], 10), 0, 0);
+
+                if (tStart > now && tStart <= cutoff) {
+                    events.push({domain: rule.domain, type: 'block',   time: tStart, slot: slot});
+                }
+                if (tEnd > now && tEnd <= cutoff) {
+                    events.push({domain: rule.domain, type: 'unblock', time: tEnd,   slot: slot});
+                }
+            }
+        }
+    }
+
+    events.sort(function(a, b) { return a.time - b.time; });
+    return events.slice(0, maxEvents);
+}
+
+function formatEta(t, now) {
+    var diffMin = Math.round((t - now) / 60000);
+    if (diffMin < 60) return 'in ' + diffMin + 'm';
+    var h = Math.floor(diffMin / 60);
+    var m = diffMin % 60;
+    return m === 0 ? 'in ' + h + 'h' : 'in ' + h + 'h ' + m + 'm';
+}
+
+function renderUpcoming(cfg) {
+    var el     = document.getElementById('upcomingContent');
+    var now    = new Date();
+    var events = computeUpcoming(cfg, now);
+
+    if (events.length === 0) {
+        el.innerHTML = '<p class="upcoming-empty">No changes scheduled in the next 24 hours</p>';
+        return;
+    }
+
+    el.innerHTML = events.map(function(ev) {
+        return '<div class="upcoming-item">' +
+            '<div class="upcoming-dot ' + ev.type + '"></div>' +
+            '<div class="upcoming-eta">'    + formatEta(ev.time, now) + '</div>' +
+            '<div class="upcoming-domain">' + ev.domain + '</div>' +
+            '<div class="upcoming-slot">'   + ev.slot.start + '–' + ev.slot.end + '</div>' +
+            '<div class="upcoming-type '    + ev.type + '">' + (ev.type === 'block' ? 'blocks' : 'unblocks') + '</div>' +
+            '</div>';
+    }).join('');
+}
+
+// ── Rules summary table ───────────────────────────────────────────────────────
+function renderRulesSummary(cfg) {
+    var el = document.getElementById('rulesContent');
+    if (!cfg || !cfg.rules || cfg.rules.length === 0) {
+        el.innerHTML = '<p style="color:#adb5bd;font-size:13px;">No rules configured</p>';
+        return;
+    }
+
+    var now          = new Date();
+    var todayName    = WEEKDAYS[now.getDay()];
+    var tomorrowName = WEEKDAYS[(now.getDay() + 1) % 7];
+
+    function fmtSlots(slots) {
+        if (!slots || slots.length === 0) return '<span style="color:#dee2e6">—</span>';
+        return '<div class="slot-list">' +
+            slots.map(function(s) { return '<span class="slot-tag">' + s.start + '–' + s.end + '</span>'; }).join('') +
+            '</div>';
+    }
+
+    var rows = cfg.rules.map(function(rule) {
+        var badge = rule.is_active
+            ? '<span class="active-badge on">active</span>'
+            : '<span class="active-badge off">paused</span>';
+        return '<tr>' +
+            '<td>' + rule.domain + '</td>' +
+            '<td>' + badge + '</td>' +
+            '<td>' + fmtSlots(rule.schedules && rule.schedules[todayName]) + '</td>' +
+            '<td>' + fmtSlots(rule.schedules && rule.schedules[tomorrowName]) + '</td>' +
+            '</tr>';
+    }).join('');
+
+    el.innerHTML = '<table class="rules-table"><thead><tr>' +
+        '<th>Domain</th><th>Status</th>' +
+        '<th>Today (' + todayName + ')</th>' +
+        '<th>Tomorrow (' + tomorrowName + ')</th>' +
+        '</tr></thead><tbody>' + rows + '</tbody></table>';
+}
+
+// ── Test tab ──────────────────────────────────────────────────────────────────
+function setDefaultTestTime() {
+    var now = new Date();
+    var pad = function(n) { return String(n).padStart(2, '0'); };
+    document.getElementById('testTime').value =
+        now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate()) +
+        ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes());
+}
+
+function toggleCustomConfig() {
+    var body  = document.getElementById('customBody');
+    var arrow = document.getElementById('customArrow');
+    var open  = body.classList.toggle('open');
+    arrow.classList.toggle('open', open);
+    if (open && !document.getElementById('testConfig').value) {
+        document.getElementById('testConfig').value = JSON.stringify(liveConfig, null, 2);
+        validateField('testConfig', 'testConfigStatus');
+    }
+}
+
+function applyTestConfig() {
+    var v = parseAndValidate(document.getElementById('testConfig').value.trim());
+    if (!v.valid) { showBanner('testConfigMsg', 'error', v.error); return; }
+    testConfig          = v.config;
+    useCustomTestConfig = true;
+    showBanner('testConfigMsg', 'success', 'Custom config applied — test queries will use this config');
+    fetchHostsPreview(testConfig, 'testHostsPanel', 'testHostsCode', 'testHostsMeta');
+    fetchPFPreview(testConfig,    'testPFPanel',    'testPFCode',    'testPFMeta');
+}
+
+function resetTestConfig() {
+    testConfig          = liveConfig;
+    useCustomTestConfig = false;
+    document.getElementById('testConfig').value = JSON.stringify(liveConfig, null, 2);
+    validateField('testConfig', 'testConfigStatus');
+    showBanner('testConfigMsg', 'success', 'Reset to live config');
+    document.getElementById('testHostsPanel').style.display = 'none';
+    document.getElementById('testPFPanel').style.display    = 'none';
+}
+
+function loadExampleConfig() {
+    document.getElementById('testConfig').value = JSON.stringify(EXAMPLE_CONFIG, null, 2);
+    validateField('testConfig', 'testConfigStatus');
+    showBanner('testConfigMsg', 'success', 'Example config loaded — click "Use this config" to apply');
+}
+
+async function runTestQuery() {
+    var time   = document.getElementById('testTime').value.trim();
+    var domain = document.getElementById('testDomain').value.trim();
+    if (!time || !domain) { alert('Enter both time and domain'); return; }
+
+    document.getElementById('testSpinner').style.display = 'block';
+    document.getElementById('resultPanel').classList.add('hidden');
+
+    var cfg      = useCustomTestConfig ? testConfig : liveConfig;
+    var formData = new FormData();
+    formData.append('config', JSON.stringify(cfg, null, 2));
+    formData.append('time',   time);
+    formData.append('domain', domain);
+
+    try {
+        var url = '/api/test-query?time=' + encodeURIComponent(time) + '&domain=' + encodeURIComponent(domain);
+        var res = await fetch(url, {
+            method: 'POST',
+            headers: {'X-Auth-Token': authToken},
+            body: formData
+        });
+        displayTestResult(await res.json());
+    } catch(e) {
+        alert('Error: ' + e.message);
+    } finally {
+        document.getElementById('testSpinner').style.display = 'none';
+    }
+}
+
+function displayTestResult(result) {
+    document.getElementById('rTime').textContent    = result.time    || '';
+    document.getElementById('rWeekday').textContent = result.weekday || '';
+    document.getElementById('rDomain').textContent  = result.domain  || '';
+    document.getElementById('rDNS').textContent     = result.dns_response || '';
+    document.getElementById('rError').innerHTML     = '';
+    document.getElementById('rWarning').innerHTML   = '';
+
+    if (result.error) {
+        document.getElementById('rError').innerHTML = '<div class="banner error">' + result.error + '</div>';
+        document.getElementById('resultPanel').classList.remove('hidden');
+        return;
+    }
+
+    var statusEl = document.getElementById('rStatus');
+    statusEl.innerHTML = result.is_blocked
+        ? '<span class="status-blocked">' + result.blocking_status + '</span>'
+        : '<span class="status-allowed">' + result.blocking_status + '</span>';
+
+    var rulesEl = document.getElementById('rRules');
+    if (result.applicable_rules && result.applicable_rules.length > 0) {
+        rulesEl.innerHTML = result.applicable_rules.map(function(rule) {
+            return '<div class="rule-result-item">' +
+                '<div class="rule-result-domain">' + rule.domain + '</div>' +
+                rule.schedules.map(function(s) {
+                    var cls = s.is_active ? 'active-slot' : 'inactive-slot';
+                    return '<div class="slot-result ' + cls + '">' +
+                        (s.is_active ? '✓' : '○') + ' ' + s.weekday + ' ' + s.start + '–' + s.end +
+                        '</div>';
+                }).join('') +
+                '</div>';
+        }).join('');
+    } else {
+        rulesEl.textContent = 'No applicable rules';
+    }
+
+    if (result.has_warning) {
+        document.getElementById('rWarning').innerHTML =
+            '<div class="banner warning">' + result.warning_message + '</div>';
+    }
+
+    document.getElementById('resultPanel').classList.remove('hidden');
+}
+
+// ── Manage tab — PIN ──────────────────────────────────────────────────────────
+function setupPinBoxes() {
+    var boxes = document.querySelectorAll('.pin-box');
+    boxes.forEach(function(box, i) {
+        box.addEventListener('input', function() {
+            box.value = box.value.replace(/\D/g, '');
+            if (box.value.length === 1 && i < boxes.length - 1) boxes[i + 1].focus();
+            if (i === boxes.length - 1 && box.value.length === 1) attemptUnlock();
+        });
+        box.addEventListener('keydown', function(e) {
+            if (e.key === 'Backspace' && box.value === '' && i > 0) {
+                boxes[i - 1].value = '';
+                boxes[i - 1].focus();
             }
         });
-    </script>
+        box.addEventListener('paste', function(e) {
+            e.preventDefault();
+            var text = (e.clipboardData || window.clipboardData).getData('text').replace(/\D/g, '');
+            if (text.length === 4) {
+                boxes.forEach(function(b, j) { b.value = text[j] || ''; });
+                attemptUnlock();
+            }
+        });
+    });
+}
+
+function getPinValue() {
+    return Array.from(document.querySelectorAll('.pin-box')).map(function(b) { return b.value; }).join('');
+}
+
+function isValidPin(input) {
+    for (var offset = -1; offset <= 1; offset++) {
+        var d   = new Date(Date.now() + offset * 60000);
+        var h24 = d.getHours();
+        var min = d.getMinutes();
+        var pad = function(n) { return String(n).padStart(2, '0'); };
+        var pin24 = pad(h24) + pad(min);
+        var h12   = h24 % 12 || 12;
+        var pin12 = pad(h12) + pad(min);
+        if (input === pin24 || input === pin12) return true;
+    }
+    return false;
+}
+
+function attemptUnlock() {
+    var pin = getPinValue();
+    if (pin.length < 4) return;
+
+    if (isValidPin(pin)) {
+        manageUnlocked = true;
+        document.getElementById('manageLock').style.display    = 'none';
+        document.getElementById('manageContent').style.display = 'block';
+        document.getElementById('manageLockBadge').textContent  = '🔓';
+        document.getElementById('manageConfig').value = JSON.stringify(liveConfig, null, 2);
+        validateField('manageConfig', 'manageConfigStatus');
+        loadManagePauseState();
+    } else {
+        var boxes = document.querySelectorAll('.pin-box');
+        boxes.forEach(function(b) { b.classList.add('error'); });
+        document.getElementById('pinError').textContent = 'Incorrect PIN';
+        setTimeout(function() {
+            boxes.forEach(function(b) { b.classList.remove('error'); b.value = ''; });
+            document.getElementById('pinError').textContent = '';
+            boxes[0].focus();
+        }, 900);
+    }
+}
+
+// ── Manage tab — Config save ──────────────────────────────────────────────────
+async function saveConfig() {
+    var v = parseAndValidate(document.getElementById('manageConfig').value.trim());
+    if (!v.valid) { showBanner('manageConfigMsg', 'error', v.error); return; }
+
+    try {
+        var res = await fetch('/api/config/update', {
+            method: 'POST',
+            headers: {'X-Auth-Token': authToken, 'Content-Type': 'application/json'},
+            body: JSON.stringify(v.config)
+        });
+        var data = await res.json();
+        if (!res.ok) { showBanner('manageConfigMsg', 'error', data.error || 'Save failed'); return; }
+        showBanner('manageConfigMsg', 'success', 'Config saved — live service updated');
+        await loadConfig();
+    } catch(e) {
+        showBanner('manageConfigMsg', 'error', 'Error: ' + e.message);
+    }
+}
+
+function resetManageConfig() {
+    document.getElementById('manageConfig').value = JSON.stringify(liveConfig, null, 2);
+    validateField('manageConfig', 'manageConfigStatus');
+    document.getElementById('manageConfigMsg').innerHTML         = '';
+    document.getElementById('manageHostsPanel').style.display   = 'none';
+    document.getElementById('managePFPanel').style.display      = 'none';
+}
+
+// ── Manage tab — Pause / Resume ───────────────────────────────────────────────
+async function loadManagePauseState() {
+    try {
+        var res  = await fetch('/api/status', {
+            method: 'POST',
+            headers: {'X-Auth-Token': authToken, 'Content-Type': 'application/json'},
+            body: JSON.stringify(liveConfig || {})
+        });
+        renderManagePause(await res.json());
+    } catch(e) {
+        showBanner('managePauseMsg', 'error', 'Error loading status: ' + e.message);
+    }
+}
+
+function renderManagePause(data) {
+    var el = document.getElementById('managePauseContent');
+    if (data.paused && data.paused_until) {
+        var until = new Date(data.paused_until);
+        var fmt   = until.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+        el.innerHTML = '<div class="pause-active-row">' +
+            '<span>⏸ Paused until ' + fmt + '</span>' +
+            '<button class="btn-success btn-sm" onclick="resumeBlocking()">▶ Resume now</button>' +
+            '</div>';
+    } else {
+        el.innerHTML =
+            '<p style="font-size:13px;color:#6c757d;margin-bottom:12px;">Pause all blocking for a set time.</p>' +
+            '<div class="button-group">' +
+            '<button class="btn-warning btn-sm" onclick="pauseBlocking(15)">15 min</button>' +
+            '<button class="btn-warning btn-sm" onclick="pauseBlocking(30)">30 min</button>' +
+            '<button class="btn-warning btn-sm" onclick="pauseBlocking(60)">1 hour</button>' +
+            '<button class="btn-warning btn-sm" onclick="pauseBlocking(120)">2 hours</button>' +
+            '</div>';
+    }
+}
+
+async function pauseBlocking(minutes) {
+    try {
+        var res  = await fetch('/api/pause', {
+            method: 'POST',
+            headers: {'X-Auth-Token': authToken, 'Content-Type': 'application/json'},
+            body: JSON.stringify({minutes: minutes})
+        });
+        var data = await res.json();
+        if (!res.ok) { showBanner('managePauseMsg', 'error', data.error || 'Failed to pause'); return; }
+        document.getElementById('managePauseMsg').innerHTML = '';
+        loadManagePauseState();
+    } catch(e) {
+        showBanner('managePauseMsg', 'error', 'Error: ' + e.message);
+    }
+}
+
+async function resumeBlocking() {
+    try {
+        var res  = await fetch('/api/pause', {
+            method: 'DELETE',
+            headers: {'X-Auth-Token': authToken}
+        });
+        var data = await res.json();
+        if (!res.ok) { showBanner('managePauseMsg', 'error', data.error || 'Failed to resume'); return; }
+        document.getElementById('managePauseMsg').innerHTML = '';
+        loadManagePauseState();
+    } catch(e) {
+        showBanner('managePauseMsg', 'error', 'Error: ' + e.message);
+    }
+}
+
+// ── Keyboard shortcuts ────────────────────────────────────────────────────────
+document.addEventListener('keypress', function(e) {
+    if (e.key === 'Enter' && (e.target.id === 'testTime' || e.target.id === 'testDomain')) {
+        runTestQuery();
+    }
+});
+
+// live validation listeners wired after DOM ready
+document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('testConfig').addEventListener('input', function() {
+        validateField('testConfig', 'testConfigStatus');
+    });
+    document.getElementById('manageConfig').addEventListener('input', function() {
+        validateField('manageConfig', 'manageConfigStatus');
+        var v = parseAndValidate(document.getElementById('manageConfig').value);
+        if (v.valid) {
+            fetchHostsPreview(v.config, 'manageHostsPanel', 'manageHostsCode', 'manageHostsMeta');
+            fetchPFPreview(v.config,    'managePFPanel',    'managePFCode',    'managePFMeta');
+        }
+    });
+});
+</script>
 </body>
 </html>
