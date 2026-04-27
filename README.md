@@ -1,5 +1,11 @@
 # Distractions-Free
 
+[![Latest Release](https://img.shields.io/github/v/release/vsangava/distractions-free?label=release)](https://github.com/vsangava/distractions-free/releases/latest)
+[![Release Date](https://img.shields.io/github/release-date/vsangava/distractions-free)](https://github.com/vsangava/distractions-free/releases/latest)
+[![Build](https://img.shields.io/github/actions/workflow/status/vsangava/distractions-free/release.yml?label=build)](https://github.com/vsangava/distractions-free/actions/workflows/release.yml)
+[![Go](https://img.shields.io/badge/go-1.26.2-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey)](https://github.com/vsangava/distractions-free/releases/latest)
+
 A system-level focus daemon for **macOS** (and Windows). It enforces a productivity schedule by blocking distracting domains at the OS layer, closing browser tabs when a block begins, and warning you 3 minutes before. It runs as a privileged background service that ordinary users cannot disable on a whim.
 
 Unlike browser extensions — one click to disable — Distractions-Free puts the block in the operating system itself: `/etc/hosts`, the local DNS resolver, and (in strict mode) the `pf` firewall. To turn it off you have to type your admin password.
