@@ -19,8 +19,17 @@ hr                                 { border-bottom-color: $blue; color: $blue; }
 a                                  { color: darken($blue, 10%); }
 a:hover                            { color: $blue; }
 
+header {
+  background: #161616;
+}
+
+header .container {
+  background: transparent;
+}
+
 .site-logo {
   display: block;
   width: 96px;
   margin: 0 auto 12px;
+  background: transparent;
 }
