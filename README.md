@@ -2,7 +2,7 @@
 
 [![Latest Release](https://img.shields.io/github/v/release/vsangava/distractions-free?label=release)](https://github.com/vsangava/distractions-free/releases/latest)
 [![Release Date](https://img.shields.io/github/release-date/vsangava/distractions-free)](https://github.com/vsangava/distractions-free/releases/latest)
-[![Build](https://img.shields.io/github/actions/workflow/status/vsangava/distractions-free/release.yml?label=build)](https://github.com/vsangava/distractions-free/actions/workflows/release.yml)
+[![Build](https://img.shields.io/github/actions/workflow/status/vsangava/distractions-free/ci.yml?branch=main&label=build)](https://github.com/vsangava/distractions-free/actions/workflows/ci.yml)
 [![Go](https://img.shields.io/badge/go-1.26.2-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey)](https://github.com/vsangava/distractions-free/releases/latest)
 
