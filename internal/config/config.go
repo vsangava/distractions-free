@@ -1,6 +1,7 @@
 package config
 
 import (
+	_ "embed"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -10,6 +11,9 @@ import (
 	"sync"
 	"time"
 )
+
+//go:embed default_config.json
+var defaultConfigBytes []byte
 
 type TimeSlot struct {
 	Start string `json:"start"`
@@ -171,50 +175,14 @@ func SaveConfig() error {
 }
 
 func saveDefaultConfig(path string) error {
+	if err := json.Unmarshal(defaultConfigBytes, &AppConfig); err != nil {
+		return err
+	}
 	token, err := generateToken()
 	if err != nil {
 		return err
 	}
-	AppConfig = Config{
-		Settings: Settings{
-			PrimaryDNS:      "8.8.8.8:53",
-			BackupDNS:       "1.1.1.1:53",
-			AuthToken:       token,
-			EnforcementMode: "hosts",
-		},
-		Groups: map[string][]string{
-			"games":  {"roblox.com", "epicgames.com", "steampowered.com", "fortnite.com", "minecraft.net"},
-			"social": {"discord.com", "facebook.com", "instagram.com", "tiktok.com", "snapchat.com", "reddit.com"},
-		},
-		Rules: []Rule{
-			{
-				Group:    "games",
-				IsActive: true,
-				Schedules: map[string][]TimeSlot{
-					"Monday":    {{Start: "09:00", End: "15:00"}, {Start: "21:30", End: "23:59"}},
-					"Tuesday":   {{Start: "09:00", End: "15:00"}, {Start: "21:30", End: "23:59"}},
-					"Wednesday": {{Start: "09:00", End: "15:00"}, {Start: "21:30", End: "23:59"}},
-					"Thursday":  {{Start: "09:00", End: "15:00"}, {Start: "21:30", End: "23:59"}},
-					"Friday":    {{Start: "09:00", End: "15:00"}, {Start: "21:30", End: "23:59"}},
-					"Saturday":  {{Start: "21:30", End: "23:59"}},
-					"Sunday":    {{Start: "21:30", End: "23:59"}},
-				},
-			},
-			{
-				Group:    "social",
-				IsActive: true,
-				Schedules: map[string][]TimeSlot{
-					"Monday":    {{Start: "09:00", End: "15:00"}, {Start: "21:30", End: "23:59"}},
-					"Tuesday":   {{Start: "09:00", End: "15:00"}, {Start: "21:30", End: "23:59"}},
-					"Wednesday": {{Start: "09:00", End: "15:00"}, {Start: "21:30", End: "23:59"}},
-					"Thursday":  {{Start: "09:00", End: "15:00"}, {Start: "21:30", End: "23:59"}},
-					"Friday":    {{Start: "09:00", End: "15:00"}, {Start: "21:30", End: "23:59"}},
-					"Saturday":  {{Start: "21:30", End: "23:59"}},
-					"Sunday":    {{Start: "21:30", End: "23:59"}},
-				},
-			},
-		},
-	}
+	AppConfig.Settings.AuthToken = token
 	data, _ := json.MarshalIndent(AppConfig, "", "  ")
 	return os.WriteFile(path, data, 0644)
 }

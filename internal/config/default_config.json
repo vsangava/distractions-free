@@ -1,0 +1,77 @@
+{
+  "settings": {
+    "primary_dns": "8.8.8.8:53",
+    "backup_dns": "1.1.1.1:53",
+    "enforcement_mode": "hosts"
+  },
+  "groups": {
+    "games": [
+      "roblox.com",
+      "rbxcdn.com",
+      "epicgames.com",
+      "steampowered.com",
+      "fortnite.com",
+      "minecraft.net"
+    ],
+    "videos": [
+      "youtube.com",
+      "youtu.be",
+      "twitch.tv",
+      "netflix.com",
+      "hulu.com",
+      "primevideo.com",
+      "disneyplus.com",
+      "vimeo.com",
+      "dailymotion.com"
+    ],
+    "social": [
+      "discord.com",
+      "facebook.com",
+      "instagram.com",
+      "tiktok.com",
+      "snapchat.com",
+      "reddit.com"
+    ]
+  },
+  "rules": [
+    {
+      "group": "games",
+      "is_active": true,
+      "schedules": {
+        "Monday":    [{"start": "09:00", "end": "12:00"}, {"start": "14:00", "end": "16:00"}, {"start": "18:00", "end": "19:00"}],
+        "Tuesday":   [{"start": "09:00", "end": "12:00"}, {"start": "14:00", "end": "16:00"}, {"start": "18:00", "end": "19:00"}],
+        "Wednesday": [{"start": "09:00", "end": "12:00"}, {"start": "14:00", "end": "16:00"}, {"start": "18:00", "end": "19:00"}],
+        "Thursday":  [{"start": "09:00", "end": "12:00"}, {"start": "14:00", "end": "16:00"}, {"start": "18:00", "end": "19:00"}],
+        "Friday":    [{"start": "09:00", "end": "12:00"}, {"start": "14:00", "end": "16:00"}, {"start": "18:00", "end": "19:00"}],
+        "Saturday":  [{"start": "09:00", "end": "12:00"}, {"start": "18:00", "end": "19:00"}],
+        "Sunday":    [{"start": "09:00", "end": "12:00"}, {"start": "18:00", "end": "19:00"}]
+      }
+    },
+    {
+      "group": "videos",
+      "is_active": true,
+      "schedules": {
+        "Monday":    [{"start": "09:00", "end": "12:00"}, {"start": "14:00", "end": "16:00"}, {"start": "18:00", "end": "19:00"}],
+        "Tuesday":   [{"start": "09:00", "end": "12:00"}, {"start": "14:00", "end": "16:00"}, {"start": "18:00", "end": "19:00"}],
+        "Wednesday": [{"start": "09:00", "end": "12:00"}, {"start": "14:00", "end": "16:00"}, {"start": "18:00", "end": "19:00"}],
+        "Thursday":  [{"start": "09:00", "end": "12:00"}, {"start": "14:00", "end": "16:00"}, {"start": "18:00", "end": "19:00"}],
+        "Friday":    [{"start": "09:00", "end": "12:00"}, {"start": "14:00", "end": "16:00"}, {"start": "18:00", "end": "19:00"}],
+        "Saturday":  [{"start": "09:00", "end": "12:00"}, {"start": "18:00", "end": "19:00"}],
+        "Sunday":    [{"start": "09:00", "end": "12:00"}, {"start": "18:00", "end": "19:00"}]
+      }
+    },
+    {
+      "group": "social",
+      "is_active": true,
+      "schedules": {
+        "Monday":    [{"start": "00:00", "end": "23:59"}],
+        "Tuesday":   [{"start": "00:00", "end": "23:59"}],
+        "Wednesday": [{"start": "00:00", "end": "23:59"}],
+        "Thursday":  [{"start": "00:00", "end": "23:59"}],
+        "Friday":    [{"start": "00:00", "end": "23:59"}],
+        "Saturday":  [{"start": "00:00", "end": "23:59"}],
+        "Sunday":    [{"start": "00:00", "end": "23:59"}]
+      }
+    }
+  ]
+}
