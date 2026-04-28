@@ -1,12 +1,32 @@
 package testcli
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/vsangava/sentinel/internal/config"
 )
+
+func TestMain(m *testing.M) {
+	// go test sets CWD to the package directory; walk up to the module root
+	// so UseLocalConfig=true finds ./config.json in the right place.
+	dir, _ := os.Getwd()
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			os.Chdir(dir)
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	os.Exit(m.Run())
+}
 
 func TestQueryBlocking_ValidTimeFormat(t *testing.T) {
 	config.UseLocalConfig = true

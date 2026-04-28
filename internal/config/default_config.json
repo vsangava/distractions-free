@@ -2,7 +2,6 @@
   "settings": {
     "primary_dns": "8.8.8.8:53",
     "backup_dns": "1.1.1.1:53",
-    "auth_token": "c911284368ac967797e8af4379b3bcb6",
     "enforcement_mode": "hosts"
   },
   "groups": {
