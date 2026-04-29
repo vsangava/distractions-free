@@ -169,6 +169,11 @@ func GetStatus() (blocked map[string]bool, lastEval time.Time) {
 	return cp, lastEvalTime
 }
 
+// isOvernightSlot reports whether a slot crosses midnight (End is before Start).
+func isOvernightSlot(slotStart, slotEnd time.Time) bool {
+	return slotEnd.Before(slotStart)
+}
+
 // EvaluateRulesAtTime evaluates blocking rules at a specific time and returns blocked domains.
 // Returns an empty map immediately if the config has an active pause window.
 // This is the testable function that doesn't depend on time.Now().
@@ -178,6 +183,7 @@ func EvaluateRulesAtTime(t time.Time, cfg config.Config) map[string]bool {
 	}
 
 	currentDay := t.Weekday().String()
+	yesterdayDay := t.AddDate(0, 0, -1).Weekday().String()
 	now := time.Date(0, 1, 1, t.Hour(), t.Minute(), 0, 0, time.UTC)
 
 	newBlocked := make(map[string]bool)
@@ -190,6 +196,8 @@ func EvaluateRulesAtTime(t time.Time, cfg config.Config) map[string]bool {
 		if len(domains) == 0 {
 			continue
 		}
+
+		// Today's slots
 		if slots, exists := rule.Schedules[currentDay]; exists {
 			for _, slot := range slots {
 				slotStart, errS := time.Parse("15:04", slot.Start)
@@ -197,7 +205,34 @@ func EvaluateRulesAtTime(t time.Time, cfg config.Config) map[string]bool {
 				if errS != nil || errE != nil {
 					continue
 				}
-				if (now.Equal(slotStart) || now.After(slotStart)) && now.Before(slotEnd) {
+				if isOvernightSlot(slotStart, slotEnd) {
+					// Evening portion of an overnight slot: blocks from Start until midnight
+					if now.Equal(slotStart) || now.After(slotStart) {
+						for _, d := range domains {
+							newBlocked[d] = true
+						}
+						break
+					}
+				} else {
+					if (now.Equal(slotStart) || now.After(slotStart)) && now.Before(slotEnd) {
+						for _, d := range domains {
+							newBlocked[d] = true
+						}
+						break
+					}
+				}
+			}
+		}
+
+		// Yesterday's overnight slots — morning continuation past midnight
+		if slots, exists := rule.Schedules[yesterdayDay]; exists {
+			for _, slot := range slots {
+				slotStart, errS := time.Parse("15:04", slot.Start)
+				slotEnd, errE := time.Parse("15:04", slot.End)
+				if errS != nil || errE != nil {
+					continue
+				}
+				if isOvernightSlot(slotStart, slotEnd) && now.Before(slotEnd) {
 					for _, d := range domains {
 						newBlocked[d] = true
 					}
