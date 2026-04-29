@@ -476,3 +476,191 @@ func TestEvaluateRulesAtTime_EdgeCaseMinuteAfterEnd(t *testing.T) {
 		t.Errorf("expected reddit.com to NOT be blocked at 15:01, got %v", result)
 	}
 }
+
+// Overnight slot tests — April 1 2024 is Monday, April 2 is Tuesday, March 31 is Sunday.
+
+func TestEvaluateRulesAtTime_OvernightSlot_EveningBlocked(t *testing.T) {
+	cfg := singleGroup("example.com", true, map[string][]config.TimeSlot{
+		"Monday": {{Start: "21:30", End: "08:00"}},
+	})
+
+	testTime := time.Date(2024, time.April, 1, 22, 0, 0, 0, time.UTC)
+	result := EvaluateRulesAtTime(testTime, cfg)
+
+	if !result["example.com"] {
+		t.Errorf("expected example.com blocked at 22:00 Monday (evening side of overnight slot)")
+	}
+}
+
+func TestEvaluateRulesAtTime_OvernightSlot_MorningBlocked(t *testing.T) {
+	cfg := singleGroup("example.com", true, map[string][]config.TimeSlot{
+		"Monday": {{Start: "21:30", End: "08:00"}},
+	})
+
+	testTime := time.Date(2024, time.April, 2, 7, 0, 0, 0, time.UTC)
+	result := EvaluateRulesAtTime(testTime, cfg)
+
+	if !result["example.com"] {
+		t.Errorf("expected example.com blocked at 07:00 Tuesday (morning side of Monday overnight slot)")
+	}
+}
+
+func TestEvaluateRulesAtTime_OvernightSlot_ExactStart_Blocked(t *testing.T) {
+	cfg := singleGroup("example.com", true, map[string][]config.TimeSlot{
+		"Monday": {{Start: "21:30", End: "08:00"}},
+	})
+
+	testTime := time.Date(2024, time.April, 1, 21, 30, 0, 0, time.UTC)
+	result := EvaluateRulesAtTime(testTime, cfg)
+
+	if !result["example.com"] {
+		t.Errorf("expected example.com blocked at exact start 21:30 Monday")
+	}
+}
+
+func TestEvaluateRulesAtTime_OvernightSlot_JustBeforeEnd_Blocked(t *testing.T) {
+	cfg := singleGroup("example.com", true, map[string][]config.TimeSlot{
+		"Monday": {{Start: "21:30", End: "08:00"}},
+	})
+
+	testTime := time.Date(2024, time.April, 2, 7, 59, 0, 0, time.UTC)
+	result := EvaluateRulesAtTime(testTime, cfg)
+
+	if !result["example.com"] {
+		t.Errorf("expected example.com blocked at 07:59 Tuesday (one minute before overnight End)")
+	}
+}
+
+func TestEvaluateRulesAtTime_OvernightSlot_ExactEnd_NotBlocked(t *testing.T) {
+	cfg := singleGroup("example.com", true, map[string][]config.TimeSlot{
+		"Monday": {{Start: "21:30", End: "08:00"}},
+	})
+
+	testTime := time.Date(2024, time.April, 2, 8, 0, 0, 0, time.UTC)
+	result := EvaluateRulesAtTime(testTime, cfg)
+
+	if result["example.com"] {
+		t.Errorf("expected example.com NOT blocked at exact end 08:00 Tuesday")
+	}
+}
+
+func TestEvaluateRulesAtTime_OvernightSlot_AfterEnd_NotBlocked(t *testing.T) {
+	cfg := singleGroup("example.com", true, map[string][]config.TimeSlot{
+		"Monday": {{Start: "21:30", End: "08:00"}},
+	})
+
+	testTime := time.Date(2024, time.April, 2, 8, 1, 0, 0, time.UTC)
+	result := EvaluateRulesAtTime(testTime, cfg)
+
+	if result["example.com"] {
+		t.Errorf("expected example.com NOT blocked at 08:01 Tuesday (after overnight End)")
+	}
+}
+
+func TestEvaluateRulesAtTime_OvernightSlot_BeforeStart_NotBlocked(t *testing.T) {
+	cfg := singleGroup("example.com", true, map[string][]config.TimeSlot{
+		"Monday": {{Start: "21:30", End: "08:00"}},
+	})
+
+	testTime := time.Date(2024, time.April, 1, 21, 29, 0, 0, time.UTC)
+	result := EvaluateRulesAtTime(testTime, cfg)
+
+	if result["example.com"] {
+		t.Errorf("expected example.com NOT blocked at 21:29 Monday (one minute before overnight Start)")
+	}
+}
+
+func TestEvaluateRulesAtTime_OvernightSlot_SundayToMonday(t *testing.T) {
+	cfg := singleGroup("example.com", true, map[string][]config.TimeSlot{
+		"Sunday": {{Start: "22:00", End: "07:00"}},
+	})
+
+	// Monday 06:30 — morning continuation of Sunday's overnight slot
+	testTime := time.Date(2024, time.April, 1, 6, 30, 0, 0, time.UTC)
+	result := EvaluateRulesAtTime(testTime, cfg)
+	if !result["example.com"] {
+		t.Errorf("expected example.com blocked at 06:30 Monday (morning side of Sunday→Monday overnight slot)")
+	}
+
+	// Monday 07:00 — exact End, must not be blocked
+	testTimeEnd := time.Date(2024, time.April, 1, 7, 0, 0, 0, time.UTC)
+	resultEnd := EvaluateRulesAtTime(testTimeEnd, cfg)
+	if resultEnd["example.com"] {
+		t.Errorf("expected example.com NOT blocked at exact end 07:00 Monday (Sunday→Monday slot)")
+	}
+}
+
+func TestEvaluateRulesAtTime_OvernightSlot_MorningNotBlockedWithoutYesterdaySchedule(t *testing.T) {
+	// Monday has a normal daytime slot only — no overnight slot
+	cfg := singleGroup("example.com", true, map[string][]config.TimeSlot{
+		"Monday": {{Start: "09:00", End: "17:00"}},
+	})
+
+	// Tuesday 07:00 — yesterday's slot is same-day and must not trigger the overnight path
+	testTime := time.Date(2024, time.April, 2, 7, 0, 0, 0, time.UTC)
+	result := EvaluateRulesAtTime(testTime, cfg)
+
+	if result["example.com"] {
+		t.Errorf("expected example.com NOT blocked at 07:00 Tuesday when Monday only has a daytime slot")
+	}
+}
+
+func TestEvaluateRulesAtTime_OvernightSlot_CoexistsWithSameDaySlot(t *testing.T) {
+	cfg := singleGroup("example.com", true, map[string][]config.TimeSlot{
+		"Monday": {
+			{Start: "09:00", End: "12:00"},
+			{Start: "21:30", End: "08:00"},
+		},
+	})
+
+	cases := []struct {
+		hour, min, day int
+		blocked        bool
+		label          string
+	}{
+		{10, 0, 1, true, "10:00 Monday (daytime slot)"},
+		{13, 0, 1, false, "13:00 Monday (gap between slots)"},
+		{22, 0, 1, true, "22:00 Monday (evening overnight)"},
+		{7, 0, 2, true, "07:00 Tuesday (morning overnight)"},
+		{8, 1, 2, false, "08:01 Tuesday (after overnight end)"},
+	}
+
+	for _, c := range cases {
+		testTime := time.Date(2024, time.April, c.day, c.hour, c.min, 0, 0, time.UTC)
+		result := EvaluateRulesAtTime(testTime, cfg)
+		if c.blocked && !result["example.com"] {
+			t.Errorf("expected example.com BLOCKED at %s", c.label)
+		}
+		if !c.blocked && result["example.com"] {
+			t.Errorf("expected example.com NOT BLOCKED at %s", c.label)
+		}
+	}
+}
+
+func TestCheckWarningDomainsAtTime_OvernightSlot_WarningFires(t *testing.T) {
+	cfg := singleGroup("example.com", true, map[string][]config.TimeSlot{
+		"Monday": {{Start: "21:30", End: "08:00"}},
+	})
+
+	// Monday 21:27 — 3 minutes before slot Start
+	testTime := time.Date(2024, time.April, 1, 21, 27, 0, 0, time.UTC)
+	warnings := CheckWarningDomainsAtTime(testTime, cfg)
+
+	if len(warnings) == 0 {
+		t.Errorf("expected warning for example.com at 21:27 Monday (3 min before overnight slot Start)")
+	}
+}
+
+func TestCheckWarningDomainsAtTime_OvernightSlot_NoWarningInMorning(t *testing.T) {
+	cfg := singleGroup("example.com", true, map[string][]config.TimeSlot{
+		"Monday": {{Start: "21:30", End: "08:00"}},
+	})
+
+	// Tuesday 07:57 — 3 min before 08:00, but 08:00 is an End time, not a Start
+	testTime := time.Date(2024, time.April, 2, 7, 57, 0, 0, time.UTC)
+	warnings := CheckWarningDomainsAtTime(testTime, cfg)
+
+	if len(warnings) != 0 {
+		t.Errorf("expected no warning at 07:57 Tuesday (morning-end of overnight slot has no warning); got %v", warnings)
+	}
+}
