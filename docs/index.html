@@ -127,37 +127,45 @@
         Sentinel blocks distracting sites at the OS level — not the browser. Set your schedule once. It holds, even when you won't.
       </p>
 
-      <!-- CTAs -->
-      <div class="flex flex-col sm:flex-row items-center justify-center gap-3 mb-8">
+      <!-- Primary macOS CTA -->
+      <div class="flex flex-col items-center gap-4 mb-8">
         <a href="https://github.com/vsangava/sentinel/releases/latest/download/sentinel-macos-arm64"
-           class="flex items-center gap-2.5 bg-brand hover:bg-brand-dark text-[#0d0d0d] font-semibold px-6 py-3 rounded-xl transition-colors text-sm w-full sm:w-auto justify-center">
-          <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
-          Download for macOS
-          <span class="text-xs opacity-70 font-normal">Apple Silicon</span>
+           class="inline-flex items-center gap-3 bg-brand hover:bg-brand-dark text-[#0d0d0d] font-bold px-8 py-4 rounded-2xl transition-colors text-base shadow-lg shadow-sky-500/20">
+          <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+          <span>
+            Download for macOS
+            <span class="block text-xs font-normal opacity-70 mt-0.5">Apple Silicon (M1 and later)</span>
+          </span>
         </a>
-        <a href="https://github.com/vsangava/sentinel/releases/latest/download/sentinel-windows-amd64.exe"
-           class="flex items-center gap-2.5 bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 font-semibold px-6 py-3 rounded-xl transition-colors text-sm w-full sm:w-auto justify-center">
-          <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
-          Download for Windows
-        </a>
-        <a href="https://github.com/vsangava/sentinel"
-           target="_blank" rel="noopener"
-           class="flex items-center gap-2 text-sm text-slate-400 hover:text-white transition-colors px-3 py-3">
-          View on GitHub →
-        </a>
-      </div>
 
-      <!-- Install one-liner -->
-      <div class="inline-flex items-center gap-3 bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-sm max-w-full">
-        <span class="text-slate-500 shrink-0">$</span>
-        <code class="text-emerald-400 font-mono text-xs sm:text-sm truncate">curl -fsSL https://github.com/vsangava/sentinel/releases/latest/download/install.sh | sudo bash</code>
-        <button x-data="{ copied: false }"
-                @click="navigator.clipboard.writeText('curl -fsSL https://github.com/vsangava/sentinel/releases/latest/download/install.sh | sudo bash'); copied = true; setTimeout(() => copied = false, 2000)"
-                class="shrink-0 text-slate-500 hover:text-slate-200 transition-colors ml-1"
-                :title="copied ? 'Copied!' : 'Copy'">
-          <svg x-show="!copied" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
-          <svg x-show="copied" x-cloak class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-        </button>
+        <!-- macOS install one-liner -->
+        <p class="text-xs text-slate-500">or install via Terminal on macOS:</p>
+        <div class="inline-flex items-center gap-3 bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-sm max-w-full">
+          <span class="text-slate-500 shrink-0">$</span>
+          <code class="text-emerald-400 font-mono text-xs sm:text-sm truncate">curl -fsSL https://github.com/vsangava/sentinel/releases/latest/download/install.sh | sudo bash</code>
+          <button x-data="{ copied: false }"
+                  @click="navigator.clipboard.writeText('curl -fsSL https://github.com/vsangava/sentinel/releases/latest/download/install.sh | sudo bash'); copied = true; setTimeout(() => copied = false, 2000)"
+                  class="shrink-0 text-slate-500 hover:text-slate-200 transition-colors ml-1"
+                  :title="copied ? 'Copied!' : 'Copy'">
+            <svg x-show="!copied" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+            <svg x-show="copied" x-cloak class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+          </button>
+        </div>
+
+        <!-- Secondary links -->
+        <div class="flex items-center gap-5 text-sm text-slate-500">
+          <a href="https://github.com/vsangava/sentinel/releases/latest/download/sentinel-windows-amd64.exe"
+             class="flex items-center gap-1.5 hover:text-slate-300 transition-colors">
+            <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
+            Windows x64
+          </a>
+          <span class="text-slate-700">·</span>
+          <a href="https://github.com/vsangava/sentinel" target="_blank" rel="noopener"
+             class="flex items-center gap-1.5 hover:text-slate-300 transition-colors">
+            <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
+            View on GitHub
+          </a>
+        </div>
       </div>
     </div>
   </section>
@@ -591,23 +599,28 @@
       </div>
 
       <!-- Download buttons -->
-      <div class="flex flex-col sm:flex-row gap-3 justify-center mb-4">
+      <div class="flex flex-col items-center gap-4 mb-4">
         <a href="https://github.com/vsangava/sentinel/releases/latest/download/sentinel-macos-arm64"
-           class="flex items-center justify-center gap-2.5 bg-brand hover:bg-brand-dark text-[#0d0d0d] font-semibold px-5 py-3 rounded-xl transition-colors text-sm">
-          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
-          macOS Apple Silicon
+           class="inline-flex items-center gap-3 bg-brand hover:bg-brand-dark text-[#0d0d0d] font-bold px-8 py-4 rounded-2xl transition-colors text-base shadow-lg shadow-sky-500/20">
+          <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+          <span>
+            Download for macOS
+            <span class="block text-xs font-normal opacity-70 mt-0.5">Apple Silicon (M1 and later)</span>
+          </span>
         </a>
-        <a href="https://github.com/vsangava/sentinel/releases/latest"
-           target="_blank" rel="noopener"
-           class="flex items-center justify-center gap-2.5 bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 font-semibold px-5 py-3 rounded-xl transition-colors text-sm">
-          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
-          macOS Intel / All releases
-        </a>
-        <a href="https://github.com/vsangava/sentinel/releases/latest/download/sentinel-windows-amd64.exe"
-           class="flex items-center justify-center gap-2.5 bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 font-semibold px-5 py-3 rounded-xl transition-colors text-sm">
-          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
-          Windows x64
-        </a>
+        <div class="flex items-center gap-5 text-sm text-slate-500">
+          <a href="https://github.com/vsangava/sentinel/releases/latest" target="_blank" rel="noopener"
+             class="flex items-center gap-1.5 hover:text-slate-300 transition-colors">
+            <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+            macOS Intel
+          </a>
+          <span class="text-slate-700">·</span>
+          <a href="https://github.com/vsangava/sentinel/releases/latest/download/sentinel-windows-amd64.exe"
+             class="flex items-center gap-1.5 hover:text-slate-300 transition-colors">
+            <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
+            Windows x64
+          </a>
+        </div>
       </div>
       <p class="text-xs text-slate-600">Built with Go · No telemetry · MIT License</p>
     </div>
