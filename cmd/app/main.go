@@ -115,42 +115,42 @@ var svcConfig = &service.Config{
 
 func runSetup() {
 	if !cleanup.IsPrivileged() {
-		log.Fatal("--setup requires root/admin privileges. Run with: sudo ./sentinel --setup")
+		log.Fatal("setup requires root/admin privileges. Run with: sudo ./sentinel setup")
 	}
 
 	prg := &program{}
 	s, err := service.New(prg, svcConfig)
 	if err != nil {
-		log.Fatalf("--setup: could not create service handle: %v", err)
+		log.Fatalf("setup: could not create service handle: %v", err)
 	}
 
 	if runtime.GOOS == "darwin" {
 		dest := "/usr/local/bin/sentinel"
 		if _, err := os.Stat(dest); err == nil {
-			log.Fatalf("Sentinel is already installed at %s. Run 'sudo sentinel --clean' to remove it first.", dest)
+			log.Fatalf("Sentinel is already installed at %s. Run 'sudo sentinel clean' to remove it first.", dest)
 		}
 		src, err := os.Executable()
 		if err != nil {
-			log.Fatalf("--setup: could not resolve binary path: %v", err)
+			log.Fatalf("setup: could not resolve binary path: %v", err)
 		}
 		data, err := os.ReadFile(src)
 		if err != nil {
-			log.Fatalf("--setup: could not read binary: %v", err)
+			log.Fatalf("setup: could not read binary: %v", err)
 		}
 		if err := os.MkdirAll("/usr/local/bin", 0755); err != nil {
-			log.Fatalf("--setup: could not create /usr/local/bin: %v", err)
+			log.Fatalf("setup: could not create /usr/local/bin: %v", err)
 		}
 		if err := os.WriteFile(dest, data, 0755); err != nil {
-			log.Fatalf("--setup: could not write binary to %s: %v", dest, err)
+			log.Fatalf("setup: could not write binary to %s: %v", dest, err)
 		}
 		fmt.Printf("Installed binary → %s\n", dest)
 	}
 
 	if err := service.Control(s, "install"); err != nil {
-		log.Fatalf("--setup: service install failed: %v", err)
+		log.Fatalf("setup: service install failed: %v", err)
 	}
 	if err := service.Control(s, "start"); err != nil {
-		log.Fatalf("--setup: service start failed: %v", err)
+		log.Fatalf("setup: service start failed: %v", err)
 	}
 
 	fmt.Println("Sentinel installed and running.")
@@ -159,7 +159,7 @@ func runSetup() {
 
 func runClean(yes bool) {
 	if !cleanup.IsPrivileged() {
-		log.Fatal("--clean requires root/admin privileges. Run with: sudo ./sentinel --clean")
+		log.Fatal("clean requires root/admin privileges. Run with: sudo ./sentinel clean")
 	}
 
 	fmt.Println("Cleaning all sentinel system changes...")
@@ -236,17 +236,17 @@ func runClean(yes bool) {
 }
 
 func main() {
-	// --setup installs the binary to /usr/local/bin (macOS), registers the service, and starts it.
-	// Usage: sudo ./sentinel --setup
-	if len(os.Args) > 1 && os.Args[1] == "--setup" {
+	// setup installs the binary to /usr/local/bin (macOS), registers the service, and starts it.
+	// Usage: sudo ./sentinel setup
+	if len(os.Args) > 1 && os.Args[1] == "setup" {
 		runSetup()
 		return
 	}
 
-	// --clean safely removes all system-level changes made by sentinel.
-	// Usage: sudo ./sentinel --clean [--confirm|--yes]
-	if len(os.Args) > 1 && os.Args[1] == "--clean" {
-		yes := len(os.Args) > 2 && (os.Args[2] == "--yes" || os.Args[2] == "--confirm")
+	// clean safely removes all system-level changes made by sentinel.
+	// Usage: sudo ./sentinel clean [--yes]
+	if len(os.Args) > 1 && os.Args[1] == "clean" {
+		yes := len(os.Args) > 2 && os.Args[2] == "--yes"
 		runClean(yes)
 		return
 	}
@@ -287,25 +287,29 @@ func main() {
 	}
 
 	// Run as regular program without service
-	if len(os.Args) > 1 && os.Args[1] == "--no-service" {
+	if len(os.Args) > 1 && os.Args[1] == "--local" {
 		config.UseLocalConfig = true
 		prg := &program{}
 		prg.run()
 		return
 	}
 
-	// --strict sets enforcement_mode to "strict" in config and exits.
-	// Usage: sudo ./sentinel --strict
+	// --set-mode sets enforcement_mode in config and exits.
+	// Usage: sudo ./sentinel --set-mode strict
 	//        sudo ./sentinel install && sudo ./sentinel start
-	if len(os.Args) > 1 && os.Args[1] == "--strict" {
+	if len(os.Args) > 1 && os.Args[1] == "--set-mode" {
+		if len(os.Args) < 3 {
+			log.Fatalf("Usage: %s --set-mode <mode>\nValid modes: hosts, dns, strict\n", os.Args[0])
+		}
+		mode := os.Args[2]
 		if err := config.LoadConfig(); err != nil {
 			log.Printf("Config warning (will use defaults): %v", err)
 		}
-		config.SetEnforcementMode("strict")
+		config.SetEnforcementMode(mode)
 		if err := config.SaveConfig(); err != nil {
 			log.Fatalf("Failed to save config: %v", err)
 		}
-		log.Println("Enforcement mode set to 'strict'. Restart the service to apply.")
+		log.Printf("Enforcement mode set to '%s'. Restart the service to apply.", mode)
 		return
 	}
 

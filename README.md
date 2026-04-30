@@ -97,10 +97,10 @@ sudo bash install.sh
 
 ```bash
 chmod +x sentinel-macos-arm64          # or sentinel-macos-amd64 on Intel
-sudo ./sentinel-macos-arm64 --setup
+sudo ./sentinel-macos-arm64 setup
 ```
 
-`--setup` copies the binary to `/usr/local/bin/sentinel`, registers the service with launchd, and starts it. You can delete the downloaded file afterwards.
+`setup` copies the binary to `/usr/local/bin/sentinel`, registers the service with launchd, and starts it. You can delete the downloaded file afterwards.
 
 ### Verify
 
@@ -160,7 +160,7 @@ The daemon reads its configuration from a single JSON file:
 |---|---|
 | macOS (service) | `/Library/Application Support/Sentinel/config.json` |
 | Windows (service) | `%PROGRAMDATA%\Sentinel\config.json` |
-| Any (`--no-service`) | `./config.json` (working directory) |
+| Any (`--local`) | `./config.json` (working directory) |
 
 The file is created with defaults on first launch. The scheduler reloads it every minute — live edits take effect on the next tick, no restart required.
 
@@ -293,19 +293,19 @@ Like `dns`, plus a `pf` (Packet Filter) anchor on macOS that drops outbound pack
 Edit `enforcement_mode` in `config.json` and restart the service, or use the shorthand:
 
 ```bash
-sudo ./sentinel --strict   # writes "strict" to config and exits
-sudo ./sentinel start      # restart to pick it up
+sudo ./sentinel --set-mode strict   # writes "strict" to config and exits
+sudo ./sentinel start               # restart to pick it up
 ```
 
 ---
 
 ## Uninstall & cleanup
 
-The all-in-one `--clean` command undoes every system change the daemon made: stops the service, removes hosts entries, removes the pf anchor, resets DNS on every interface pointing at `127.0.0.1`, flushes the resolver cache, unregisters the service, removes the config directory, and verifies port 53 is free.
+The all-in-one `clean` command undoes every system change the daemon made: stops the service, removes hosts entries, removes the pf anchor, resets DNS on every interface pointing at `127.0.0.1`, flushes the resolver cache, unregisters the service, removes the config directory, and verifies port 53 is free.
 
 ```bash
-sudo sentinel --clean             # asks before deleting config
-sudo sentinel --clean --confirm   # deletes config without asking
+sudo sentinel clean         # asks before deleting config
+sudo sentinel clean --yes   # deletes config without asking
 ```
 
 If you'd rather drive the steps yourself:
@@ -316,31 +316,31 @@ sudo ./sentinel uninstall   # removes the service registration
 sudo rm -rf "/Library/Application Support/Sentinel"
 ```
 
-> ⚠️ In `dns`/`strict` mode, do not delete the binary while the service is running with system DNS pointed at `127.0.0.1`, or the machine will lose name resolution. `--clean` handles this correctly; manual removal does not.
+> ⚠️ In `dns`/`strict` mode, do not delete the binary while the service is running with system DNS pointed at `127.0.0.1`, or the machine will lose name resolution. `clean` handles this correctly; manual removal does not.
 
 ---
 
 ## Command-line reference
 
 ```
-sentinel <subcommand>                    # service management
-sentinel [--flag]                        # local / test mode
-sudo sentinel --setup                    # install + start in one command
-sudo sentinel --clean [--confirm|--yes]  # forensic uninstall
+sentinel <subcommand>           # service management
+sentinel [--flag]               # local / test mode
+sudo sentinel setup             # install + start in one command
+sudo sentinel clean [--yes]     # forensic uninstall
 ```
 
 | Command / flag | Privileges | What it does | More |
 |---|---|---|---|
-| `--setup` | sudo | Copy binary to `/usr/local/bin/sentinel`, register service, and start it (macOS: copies; Windows: install+start only) | [Install](#install) |
+| `setup` | sudo | Copy binary to `/usr/local/bin/sentinel`, register service, and start it (macOS: copies; Windows: install+start only) | [Install](#install) |
 | `install` | sudo | Register the system service (launchd / Windows Service) | [Install](#install) |
 | `uninstall` | sudo | Remove the service registration | [Uninstall](#uninstall--cleanup) |
 | `start` | sudo | Start the service in the background | [Install](#install) |
 | `stop` | sudo | Stop the service; clears hosts entries / restores DNS | [Uninstall](#uninstall--cleanup) |
 | `status` | sudo | Print whether the service is running | — |
 | `run` | sudo | Run as if launched by the service supervisor (foreground) | — |
-| `--no-service` | none | Run the daemon in the foreground using `./config.json` | [Test utilities](#test-utilities) |
-| `--strict` | sudo | Set `enforcement_mode` to `"strict"` in config and exit | [Switching modes](#switching-modes) |
-| `--clean [--confirm\|--yes]` | sudo | Undo every system change; use before deleting the binary | [Uninstall](#uninstall--cleanup) |
+| `clean [--yes]` | sudo | Undo every system change; use before deleting the binary | [Uninstall](#uninstall--cleanup) |
+| `--local` | none | Run the daemon in the foreground using `./config.json` | [Test utilities](#test-utilities) |
+| `--set-mode <mode>` | sudo | Set `enforcement_mode` in config and exit (modes: `hosts`, `dns`, `strict`) | [Switching modes](#switching-modes) |
 | `--test-query "<YYYY-MM-DD HH:MM>" <domain>` | none | Check whether a domain would be blocked at a specific time | [Test utilities](#test-utilities) |
 | `--test-web` | none | Start the dashboard standalone without installing the service | [Test utilities](#test-utilities) |
 | `--test-applescript` | none | Generate and optionally run the tab-closing AppleScript (macOS) | [Test utilities](#test-utilities) |
@@ -383,7 +383,7 @@ make build-all     # macOS arm64 + amd64 + Windows amd64
 | `make test` | `go test ./...` |
 | `make release` | `test` + `build-all` + `verify-binaries` (pre-release sanity check) |
 | `make clean` | Remove built binaries |
-| `make dev-install` | Build and install the service locally (`build` + `--setup`); requires sudo |
+| `make dev-install` | Build and install the service locally (`build` + `setup`); requires sudo |
 | `make dev-uninstall` | Uninstall and fully clean up the service; requires sudo |
 
 ## Running tests
@@ -410,7 +410,7 @@ What the test suite does **not** cover (validated by hand — requires root and 
 
 ## Test utilities
 
-Three flags let you exercise the daemon without installing it as a service:
+Three flags let you exercise the daemon without installing it as a service. (`--local` is a fourth — it runs the full daemon using `./config.json`.)
 
 ### `--test-query "<time>" <domain>`
 

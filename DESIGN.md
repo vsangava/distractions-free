@@ -14,7 +14,7 @@ This document describes how the daemon is built. It complements [README.md](./RE
 8. [Configuration](#8-configuration)
 9. [Web server & HTTP API](#9-web-server--http-api)
 10. [Process lifecycle](#10-process-lifecycle)
-11. [Cleanup (`--clean`)](#11-cleanup---clean)
+11. [Cleanup (`clean`)](#11-cleanup-clean)
 12. [Testability strategy](#12-testability-strategy)
 13. [Concurrency model](#13-concurrency-model)
 14. [Security model](#14-security-model)
@@ -123,7 +123,7 @@ internal/
   scheduler/scheduler.go         # 1-min ticker, diff computation, AppleScript
   proxy/dns.go                   # DNS server, GetDNSResponse pure function
   pf/pf.go                       # pf anchor management (macOS, root)
-  cleanup/cleanup.go             # --clean implementation: per-step, idempotent
+  cleanup/cleanup.go             # clean implementation: per-step, idempotent
   cleanup/priv_unix.go           # IsPrivileged() — Geteuid()==0
   cleanup/priv_windows.go        # IsPrivileged() — token IsMember Administrators
   testcli/testcli.go             # --test-query CLI + GetQueryResult struct
@@ -201,7 +201,7 @@ The `GenerateHostsEntries(domains []string) []string` function is exported so th
 
 Maintains an in-memory `blocked map[string]bool` and pushes updates to the `proxy` package via `proxy.UpdateBlockedDomains(snapshot)` on every Activate/Deactivate. The DNS server itself is started by `cmd/app/main.go`, not by the enforcer — this separation matters because the server is the thing that blocks the goroutine forever, and `main.go` needs to control that.
 
-`Teardown` resets the system DNS to its previous state. **Caveat:** the current implementation only resets the `Wi-Fi` interface on macOS (and `Wi-Fi` on Windows). Multi-interface cleanup is delegated to the `--clean` command (see `internal/cleanup/cleanup.go`), which iterates every interface that points at `127.0.0.1`. Tracked in issue #12.
+`Teardown` resets the system DNS to its previous state. **Caveat:** the current implementation only resets the `Wi-Fi` interface on macOS (and `Wi-Fi` on Windows). Multi-interface cleanup is delegated to the `clean` command (see `internal/cleanup/cleanup.go`), which iterates every interface that points at `127.0.0.1`. Tracked in issue #12.
 
 ### `StrictEnforcer` (`strict.go`)
 
@@ -453,7 +453,7 @@ A rule used to carry a single `Domain` string, which meant blocking five gaming 
 | Linux | `/etc/distractionsfree/config.json` |
 | `UseLocalConfig=true` | `./config.json` |
 
-`UseLocalConfig` is a package-level boolean set by `--no-service`, `--test-web`, and `--test-query` so they can run against a working-directory config without touching system paths.
+`UseLocalConfig` is a package-level boolean set by `--local`, `--test-web`, and `--test-query` so they can run against a working-directory config without touching system paths.
 
 ### Bootstrap
 
@@ -481,7 +481,7 @@ The scheduler calls `LoadConfig()` once per tick. `web.ConfigHandler` also calls
 `internal/web/server.go`. Listens on `127.0.0.1:8040`. Two entry points:
 
 - `StartWebServer()` — used in service mode; same routes, called by `main.go`.
-- `StartTestWebServer()` — used in `--test-web`; loads config from working dir, otherwise identical.
+- `StartTestWebServer()` — used in `--test-web` mode; loads config from working dir, otherwise identical.
 
 ### Routes
 
@@ -536,14 +536,15 @@ The auth token is preserved across updates regardless of what the client posts �
 ### CLI dispatch order
 
 ```
-1. --clean [--yes]           → cleanup.* steps, exit
-2. --test-web                → web.StartTestWebServer (UseLocalConfig=true)
-3. --test-query <t> <d>      → testcli.QueryBlocking, exit
-4. --test-applescript        → run AppleScript demo, exit
-5. --no-service              → run program.run() in foreground (UseLocalConfig=true)
-6. --strict                  → config.SetEnforcementMode("strict") + SaveConfig, exit
-7. install/uninstall/start/stop/status/run → service.Control(s, arg)
-8. (no args)                 → s.Run() — service supervisor mode
+1. setup                         → copy binary, service install + start, exit
+2. clean [--yes]                 → cleanup.* steps, exit
+3. --test-web                    → web.StartTestWebServer (UseLocalConfig=true)
+4. --test-query <t> <d>          → testcli.QueryBlocking, exit
+5. --test-applescript            → run AppleScript demo, exit
+6. --local                       → run program.run() in foreground (UseLocalConfig=true)
+7. --set-mode <mode>             → config.SetEnforcementMode(mode) + SaveConfig, exit
+8. install/uninstall/start/stop/status/run → service.Control(s, arg)
+9. (no args)                     → s.Run() — service supervisor mode
 ```
 
 ### Service start path
@@ -592,11 +593,11 @@ func (p *program) Stop(s service.Service) error {
 - `DNSEnforcer.Teardown` → reset Wi-Fi DNS, flush DNS cache.
 - `StrictEnforcer.Teardown` → DNS teardown + `pf.RemoveAnchor`.
 
-`DNSEnforcer.Teardown` only resets the `Wi-Fi` interface today (issue #12). For multi-interface cleanup, use `--clean`.
+`DNSEnforcer.Teardown` only resets the `Wi-Fi` interface today (issue #12). For multi-interface cleanup, use `clean`.
 
 ---
 
-## 11. Cleanup (`--clean`)
+## 11. Cleanup (`clean`)
 
 `internal/cleanup/cleanup.go` plus `priv_unix.go` / `priv_windows.go`. The forensic recovery path: undo every system change sentinel might have made, even if the service crashed mid-write.
 
@@ -652,7 +653,7 @@ What's **not** tested by the suite (validated by hand on a real macOS box):
 - `osascript` invocations against running Chrome/Safari.
 - launchd / Windows Service Manager registration.
 
-The `--test-web`, `--test-query`, and `--test-applescript` CLI flags exist exactly to exercise these by-hand paths interactively.
+The `--test-web`, `--test-query`, and `--test-applescript` flags exist exactly to exercise these by-hand paths interactively.
 
 ### AppleScript test seam
 
@@ -693,7 +694,7 @@ Sentinel is **not** a security tool. It's a friction tool against your own futur
 - The Manage-tab PIN is not a password. It's a friction layer designed to make you pause and think before disabling your own focus rules. Trivially bypassed by anyone who reads the JS.
 - The service runs as root (macOS launchd daemon, Windows Service). Anything that compromises the binary inherits root. Build releases via the GitHub Actions workflow; don't run a binary you didn't compile or download from a release tag.
 - `/etc/hosts` and `/etc/pf.conf` edits use atomic temp-file + rename. A crash mid-write cannot corrupt the file. Markers (`# sentinel:begin`/`:end`) mean other tools that respect them won't trample our entries.
-- The `--clean` command is the canonical recovery path. It iterates every interface, does not assume a happy-path service stop succeeded, and exits non-zero if any critical step fails.
+- The `clean` command is the canonical recovery path. It iterates every interface, does not assume a happy-path service stop succeeded, and exits non-zero if any critical step fails.
 
 ---
 

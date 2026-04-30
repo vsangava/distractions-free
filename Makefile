@@ -77,11 +77,11 @@ check-release: release
 
 # Build and install service locally (developer use only)
 dev-install: build
-	sudo ./sentinel --setup
+	sudo ./sentinel setup
 
 # Uninstall and clean up the service (developer use only)
 dev-uninstall:
-	sudo /usr/local/bin/sentinel --clean --confirm
+	sudo /usr/local/bin/sentinel clean --yes
 
 # Verify binaries exist and have content
 verify-binaries:

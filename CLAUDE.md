@@ -32,7 +32,7 @@ go test ./internal/proxy -v
 
 The binary has four flags for development testing — none require root or service installation:
 
-- `--no-service` — runs DNS proxy, scheduler, and web UI using local `./config.json` (not system path)
+- `--local` — runs DNS proxy, scheduler, and web UI using local `./config.json` (not system path)
 - `--test-query "2024-04-01 10:30" youtube.com` — evaluates blocking at a specific time and queries real upstream DNS
 - `--test-web` — starts the web dashboard at `http://localhost:8040`
 - `--test-applescript` — generates and optionally executes tab-closing/notification AppleScript
@@ -71,7 +71,7 @@ AppleScript execution uses `AppleScriptGenerator` and `ScriptExecutor` interface
 | OS | Path |
 |---|---|
 | macOS (service) | `/Library/Application Support/Sentinel/config.json` |
-| `--no-service` | `./config.json` (working directory) |
+| `--local` | `./config.json` (working directory) |
 
 Config is re-read every scheduler tick — live edits take effect within 60 seconds, no restart needed.
 

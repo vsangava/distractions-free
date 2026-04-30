@@ -11,7 +11,7 @@ This document is for when something is wrong. If you're just installing for the 
 5. [Reading logs](#5-reading-logs)
 6. [Manual install / start / stop / uninstall](#6-manual-install--start--stop--uninstall)
 7. [Verifying behaviour without installing the service](#7-verifying-behaviour-without-installing-the-service)
-8. [The `--clean` recovery path](#8-the---clean-recovery-path)
+8. [The `clean` recovery path](#8-the-clean-recovery-path)
 9. [Common errors](#9-common-errors)
 
 ---
@@ -23,7 +23,7 @@ If you removed or stopped the service while it was in `dns` or `strict` mode and
 **Fix it in one command (requires sudo):**
 
 ```bash
-sudo ./sentinel --clean --yes
+sudo ./sentinel clean --yes
 ```
 
 That iterates every network interface, resets the ones pointing at `127.0.0.1`, flushes the resolver cache, and verifies port 53 is free. It also handles the case where you've already deleted the binary's config dir.
@@ -63,7 +63,7 @@ ipconfig /flushdns
 | Web dashboard returns 401 unauthorized | Auth token mismatch — UI didn't bootstrap | [§9](#9-common-errors) |
 | Config edits aren't taking effect | Bad JSON, or you didn't wait 60 seconds | [§9](#9-common-errors) |
 | `/api/pause` returns 400 | `minutes` outside 1–240 range | — |
-| `--clean` reports critical failures | A step couldn't undo something — output tells you which | [§8 The --clean recovery path](#8-the---clean-recovery-path) |
+| `clean` reports critical failures | A step couldn't undo something — output tells you which | [§8 The clean recovery path](#8-the-clean-recovery-path) |
 
 ---
 
@@ -242,10 +242,10 @@ If launchd / Service Manager logs aren't useful, run the daemon in the foregroun
 sudo ./sentinel stop          # stop the service version
 sudo ./sentinel run           # run with the supervisor (foreground)
 # or, even simpler, no privileges needed for hosts-mode rule evaluation:
-./sentinel --no-service       # uses ./config.json
+./sentinel --local            # uses ./config.json
 ```
 
-`--no-service` is a fast way to validate that the rules and scheduler logic work — it skips system paths and won't install anything.
+`--local` is a fast way to validate that the rules and scheduler logic work — it skips system paths and won't install anything.
 
 ---
 
@@ -310,13 +310,13 @@ Three flags exist exactly so you can test the daemon's core logic without privil
 
 ---
 
-## 8. The `--clean` recovery path
+## 8. The `clean` recovery path
 
-`--clean` is the canonical "make it like sentinel was never installed" command. Run it any time the system is in an unknown state — it does not assume `stop` succeeded, and every step is idempotent.
+`clean` is the canonical "make it like sentinel was never installed" command. Run it any time the system is in an unknown state — it does not assume `stop` succeeded, and every step is idempotent.
 
 ```bash
-sudo ./sentinel --clean         # interactive: prompts before deleting config dir
-sudo ./sentinel --clean --yes   # non-interactive
+sudo ./sentinel clean         # interactive: prompts before deleting config dir
+sudo ./sentinel clean --yes   # non-interactive
 ```
 
 The output is one line per step:
@@ -342,7 +342,7 @@ Status meanings:
 | `[✓]` done | Step completed successfully |
 | `[—]` skipped | Step was a no-op (already in the desired state, or not applicable on this OS) |
 | `[!]` warn | Non-critical failure; cleanup continues |
-| `[✗]` error | Critical failure; if any are present `--clean` exits non-zero |
+| `[✗]` error | Critical failure; if any are present `clean` exits non-zero |
 
 If `Port 53 is free` reports a warning, something unrelated is holding the port:
 
@@ -450,7 +450,7 @@ The strict enforcer degrades to DNS-only when pf setup fails. Common causes:
 To start fresh:
 
 ```bash
-sudo ./sentinel --clean --yes   # removes our anchor + pf.conf injection
+sudo ./sentinel clean --yes   # removes our anchor + pf.conf injection
 # inspect /etc/pf.conf — should be back to its original state
 sudo ./sentinel install
 sudo ./sentinel start
@@ -461,6 +461,6 @@ sudo ./sentinel start
 
 See [§4 macOS AppleScript path](#macos-applescript-path). The most common cause is denied automation permissions for Chrome/Safari — fix in System Settings → Privacy & Security → Automation.
 
-### `--clean` says "could not create service handle"
+### `clean` says "could not create service handle"
 
 Usually means the binary you're running was built for a different OS. Check `file ./sentinel` and rebuild for the current platform with `make build`.
