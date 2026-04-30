@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sentinel — Your schedule. Enforced.</title>
+  <meta name="description" content="Block distracting websites at the OS level on macOS and Windows. Schedule-based, admin-protected, no browser extension needed.">
+  <meta property="og:title" content="Sentinel — Your schedule. Enforced.">
+  <meta property="og:description" content="OS-level productivity blocking for macOS and Windows. No extension to disable.">
+  <meta property="og:type" content="website">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script>
+    tailwind = {
+      config: {
+        theme: {
+          extend: {
+            fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+            colors: {
+              brand: { DEFAULT: '#38bdf8', dark: '#0ea5e9' }
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+  <style>
+    .glow-blob {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(80px);
+      pointer-events: none;
+    }
+    .gradient-text {
+      background: linear-gradient(135deg, #38bdf8, #818cf8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    [x-cloak] { display: none !important; }
+  </style>
+</head>
+<body class="bg-[#0d0d0d] text-slate-100 font-sans antialiased">
+
+  <!-- ============================================================
+       NAVBAR
+  ============================================================ -->
+  <nav x-data="{ open: false }" class="fixed top-0 left-0 right-0 z-50 bg-[#0d0d0d]/80 backdrop-blur-md border-b border-slate-800">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="flex items-center justify-between h-16">
+        <!-- Logo + wordmark -->
+        <a href="#" class="flex items-center gap-2.5 group">
+          <img src="assets/img/logo2.png" alt="Sentinel" class="h-8 w-auto">
+          <span class="text-white font-bold text-lg tracking-tight">Sentinel</span>
+        </a>
+
+        <!-- Desktop nav links -->
+        <div class="hidden md:flex items-center gap-7">
+          <a href="#features" class="text-sm text-slate-400 hover:text-white transition-colors">Features</a>
+          <a href="#how-it-works" class="text-sm text-slate-400 hover:text-white transition-colors">How It Works</a>
+          <a href="#modes" class="text-sm text-slate-400 hover:text-white transition-colors">Modes</a>
+          <a href="#faq" class="text-sm text-slate-400 hover:text-white transition-colors">FAQ</a>
+          <a href="https://github.com/vsangava/sentinel" target="_blank" rel="noopener" class="text-sm text-slate-400 hover:text-white transition-colors flex items-center gap-1.5">
+            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
+            GitHub
+          </a>
+        </div>
+
+        <!-- Desktop CTA -->
+        <a href="#download" class="hidden md:inline-flex items-center gap-2 bg-sky-400 hover:bg-sky-500 text-[#0d0d0d] font-semibold text-sm px-4 py-2 rounded-lg transition-colors">
+          Download
+        </a>
+
+        <!-- Mobile hamburger -->
+        <button @click="open = !open" class="md:hidden p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors">
+          <svg x-show="!open" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+          <svg x-show="open" x-cloak class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Mobile menu -->
+    <div x-show="open" x-cloak x-transition class="md:hidden border-t border-slate-800 bg-[#0d0d0d]">
+      <div class="px-4 py-4 space-y-3">
+        <a href="#features" @click="open=false" class="block text-sm text-slate-300 hover:text-white py-1">Features</a>
+        <a href="#how-it-works" @click="open=false" class="block text-sm text-slate-300 hover:text-white py-1">How It Works</a>
+        <a href="#modes" @click="open=false" class="block text-sm text-slate-300 hover:text-white py-1">Modes</a>
+        <a href="#faq" @click="open=false" class="block text-sm text-slate-300 hover:text-white py-1">FAQ</a>
+        <a href="https://github.com/vsangava/sentinel" target="_blank" rel="noopener" class="block text-sm text-slate-300 hover:text-white py-1">GitHub</a>
+        <a href="#download" @click="open=false" class="block text-sm font-semibold text-[#0d0d0d] bg-sky-400 hover:bg-sky-500 text-center py-2 rounded-lg mt-2">Download</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ============================================================
+       HERO
+  ============================================================ -->
+  <section class="relative min-h-screen flex items-center pt-16 overflow-hidden">
+    <!-- Background glow blobs -->
+    <div class="glow-blob w-96 h-96 bg-sky-500/10 top-20 -left-32"></div>
+    <div class="glow-blob w-80 h-80 bg-indigo-500/10 bottom-24 -right-24"></div>
+    <div class="glow-blob w-64 h-64 bg-sky-400/5 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"></div>
+
+    <div class="relative max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-24 text-center">
+      <!-- Logo -->
+      <div class="flex justify-center mb-8">
+        <img src="assets/img/logo2.png" alt="Sentinel" class="h-20 w-auto drop-shadow-[0_0_24px_rgba(56,189,248,0.3)]">
+      </div>
+
+      <!-- Badge -->
+      <div class="inline-flex items-center gap-2 bg-slate-800/80 border border-slate-700 rounded-full px-4 py-1.5 text-xs font-medium text-slate-300 mb-6">
+        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+        macOS · Windows · No browser extension
+      </div>
+
+      <!-- Headline -->
+      <h1 class="text-5xl sm:text-6xl lg:text-7xl font-extrabold text-white leading-tight tracking-tight mb-6">
+        Your schedule.<br>
+        <span class="gradient-text">Enforced.</span>
+      </h1>
+
+      <!-- Subheadline -->
+      <p class="text-lg sm:text-xl text-slate-400 max-w-2xl mx-auto mb-10 leading-relaxed">
+        Sentinel blocks distracting sites at the OS level — not the browser. Set your schedule once. It holds, even when you won't.
+      </p>
+
+      <!-- Primary macOS CTA -->
+      <div class="flex flex-col items-center gap-4 mb-8">
+        <a href="https://github.com/vsangava/sentinel/releases/latest/download/sentinel-macos-arm64"
+           class="inline-flex items-center gap-3 bg-sky-400 hover:bg-sky-500 text-[#0d0d0d] font-bold px-8 py-4 rounded-2xl transition-colors text-base shadow-lg shadow-sky-500/20">
+          <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+          <span>
+            Download for macOS
+            <span class="block text-xs font-normal opacity-70 mt-0.5">Apple Silicon (M1 and later)</span>
+          </span>
+        </a>
+
+        <!-- macOS install one-liner -->
+        <p class="text-xs text-slate-500">or install via Terminal on macOS:</p>
+        <div class="inline-flex items-center gap-3 bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-sm max-w-full">
+          <span class="text-slate-500 shrink-0">$</span>
+          <code class="text-emerald-400 font-mono text-xs sm:text-sm truncate">curl -fsSL https://github.com/vsangava/sentinel/releases/latest/download/install.sh | sudo bash</code>
+          <button x-data="{ copied: false }"
+                  @click="navigator.clipboard.writeText('curl -fsSL https://github.com/vsangava/sentinel/releases/latest/download/install.sh | sudo bash'); copied = true; setTimeout(() => copied = false, 2000)"
+                  class="shrink-0 text-slate-500 hover:text-slate-200 transition-colors ml-1"
+                  :title="copied ? 'Copied!' : 'Copy'">
+            <svg x-show="!copied" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+            <svg x-show="copied" x-cloak class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+          </button>
+        </div>
+
+        <!-- Secondary links -->
+        <div class="flex items-center gap-5 text-sm text-slate-500">
+          <a href="https://github.com/vsangava/sentinel/releases/latest/download/sentinel-windows-amd64.exe"
+             class="flex items-center gap-1.5 hover:text-slate-300 transition-colors">
+            <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
+            Windows x64
+          </a>
+          <span class="text-slate-700">·</span>
+          <a href="https://github.com/vsangava/sentinel" target="_blank" rel="noopener"
+             class="flex items-center gap-1.5 hover:text-slate-300 transition-colors">
+            <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
+            View on GitHub
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       STATS BAR
+  ============================================================ -->
+  <section class="border-y border-slate-800 bg-[#111111]">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-5">
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 sm:gap-0 sm:divide-x sm:divide-slate-800">
+        <div class="text-center px-4">
+          <div class="text-sm font-semibold text-white">OS-level blocking</div>
+          <div class="text-xs text-slate-500 mt-0.5">Every browser &amp; app</div>
+        </div>
+        <div class="text-center px-4">
+          <div class="text-sm font-semibold text-white">3 platforms</div>
+          <div class="text-xs text-slate-500 mt-0.5">macOS arm64 · Intel · Windows</div>
+        </div>
+        <div class="text-center px-4">
+          <div class="text-sm font-semibold text-white">3-min heads-up</div>
+          <div class="text-xs text-slate-500 mt-0.5">Native notification before blocks</div>
+        </div>
+        <div class="text-center px-4">
+          <div class="text-sm font-semibold text-white">Zero cloud</div>
+          <div class="text-xs text-slate-500 mt-0.5">All local, no accounts needed</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       FEATURES
+  ============================================================ -->
+  <section id="features" class="py-24">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="text-center mb-16">
+        <h2 class="text-3xl sm:text-4xl font-extrabold text-white mb-4">Built to hold</h2>
+        <p class="text-slate-400 text-lg max-w-xl mx-auto">Not just another blocker you'll disable in ten minutes.</p>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+
+        <!-- Feature: OS-level -->
+        <div class="bg-[#161616] border border-slate-800 rounded-2xl p-6 hover:border-sky-500/40 transition-colors">
+          <div class="w-10 h-10 rounded-xl bg-sky-500/10 flex items-center justify-center mb-4">
+            <svg class="w-5 h-5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+          </div>
+          <h3 class="text-white font-semibold mb-2">OS-level blocking</h3>
+          <p class="text-slate-400 text-sm leading-relaxed">Works in every browser and app on your machine. No extension to disable, no browser to switch.</p>
+        </div>
+
+        <!-- Feature: Schedule-based -->
+        <div class="bg-[#161616] border border-slate-800 rounded-2xl p-6 hover:border-sky-500/40 transition-colors">
+          <div class="w-10 h-10 rounded-xl bg-sky-500/10 flex items-center justify-center mb-4">
+            <svg class="w-5 h-5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+          </div>
+          <h3 class="text-white font-semibold mb-2">Schedule-based</h3>
+          <p class="text-slate-400 text-sm leading-relaxed">Define time windows per day of the week. Blocks activate and lift to the minute — mornings, evenings, all day, whatever you need.</p>
+        </div>
+
+        <!-- Feature: Tab closing -->
+        <div class="bg-[#161616] border border-slate-800 rounded-2xl p-6 hover:border-sky-500/40 transition-colors">
+          <div class="w-10 h-10 rounded-xl bg-sky-500/10 flex items-center justify-center mb-4">
+            <svg class="w-5 h-5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </div>
+          <h3 class="text-white font-semibold mb-2">Tabs close automatically</h3>
+          <p class="text-slate-400 text-sm leading-relaxed">When a block begins, Chrome and Safari close any open tabs for blocked sites. No lingering temptations.
+            <span class="text-xs text-amber-400 ml-1">macOS</span>
+          </p>
+        </div>
+
+        <!-- Feature: 3-min warning -->
+        <div class="bg-[#161616] border border-slate-800 rounded-2xl p-6 hover:border-sky-500/40 transition-colors">
+          <div class="w-10 h-10 rounded-xl bg-sky-500/10 flex items-center justify-center mb-4">
+            <svg class="w-5 h-5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
+          </div>
+          <h3 class="text-white font-semibold mb-2">3-minute heads-up</h3>
+          <p class="text-slate-400 text-sm leading-relaxed">A native notification gives you time to wrap up before sites go dark. Friction-free transition.
+            <span class="text-xs text-amber-400 ml-1">macOS</span>
+          </p>
+        </div>
+
+        <!-- Feature: Live config -->
+        <div class="bg-[#161616] border border-slate-800 rounded-2xl p-6 hover:border-sky-500/40 transition-colors">
+          <div class="w-10 h-10 rounded-xl bg-sky-500/10 flex items-center justify-center mb-4">
+            <svg class="w-5 h-5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+          </div>
+          <h3 class="text-white font-semibold mb-2">Live config, no restart</h3>
+          <p class="text-slate-400 text-sm leading-relaxed">Edit the JSON config and save. Changes reload within 60 seconds — no daemon restart, no downtime.</p>
+        </div>
+
+        <!-- Feature: Sleep/wake -->
+        <div class="bg-[#161616] border border-slate-800 rounded-2xl p-6 hover:border-sky-500/40 transition-colors">
+          <div class="w-10 h-10 rounded-xl bg-sky-500/10 flex items-center justify-center mb-4">
+            <svg class="w-5 h-5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
+          </div>
+          <h3 class="text-white font-semibold mb-2">Survives sleep &amp; wake</h3>
+          <p class="text-slate-400 text-sm leading-relaxed">Close the lid and open it hours later. The scheduler catches up on the next tick — no stale state, no gaps.</p>
+        </div>
+
+        <!-- Feature: Web dashboard -->
+        <div class="bg-[#161616] border border-slate-800 rounded-2xl p-6 hover:border-sky-500/40 transition-colors">
+          <div class="w-10 h-10 rounded-xl bg-sky-500/10 flex items-center justify-center mb-4">
+            <svg class="w-5 h-5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+          </div>
+          <h3 class="text-white font-semibold mb-2">Web dashboard at :8040</h3>
+          <p class="text-slate-400 text-sm leading-relaxed">Manage rules, check blocked status, test schedules, and pause blocking — all at <code class="text-sky-400 text-xs">localhost:8040</code>.</p>
+        </div>
+
+        <!-- Feature: Clean uninstall -->
+        <div class="bg-[#161616] border border-slate-800 rounded-2xl p-6 hover:border-sky-500/40 transition-colors sm:col-span-2 lg:col-span-1">
+          <div class="w-10 h-10 rounded-xl bg-sky-500/10 flex items-center justify-center mb-4">
+            <svg class="w-5 h-5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+          </div>
+          <h3 class="text-white font-semibold mb-2">Clean uninstall</h3>
+          <p class="text-slate-400 text-sm leading-relaxed">One command removes every system change — hosts entries, service registration, DNS config, firewall rules. Leaves nothing behind.</p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       HOW IT WORKS
+  ============================================================ -->
+  <section id="how-it-works" class="py-24 bg-[#0f1117]">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="text-center mb-16">
+        <h2 class="text-3xl sm:text-4xl font-extrabold text-white mb-4">Up in minutes</h2>
+        <p class="text-slate-400 text-lg">One command to install. Then it runs silently, forever.</p>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-8 relative">
+        <!-- Connecting line (desktop only) -->
+        <div class="hidden md:block absolute top-8 left-1/3 right-1/3 h-px bg-gradient-to-r from-transparent via-slate-700 to-transparent"></div>
+
+        <!-- Step 1 -->
+        <div class="relative text-center">
+          <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-sky-500/10 border border-sky-500/20 text-sky-400 font-extrabold text-2xl mb-6 relative z-10">
+            1
+          </div>
+          <h3 class="text-white font-bold text-lg mb-3">Install in one command</h3>
+          <p class="text-slate-400 text-sm leading-relaxed mb-4">The script detects your architecture, downloads the right binary, registers the system service, and starts it.</p>
+          <div class="bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-left">
+            <code class="text-emerald-400 font-mono text-xs break-all">curl -fsSL …/install.sh | sudo bash</code>
+          </div>
+        </div>
+
+        <!-- Step 2 -->
+        <div class="relative text-center">
+          <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-sky-500/10 border border-sky-500/20 text-sky-400 font-extrabold text-2xl mb-6 relative z-10">
+            2
+          </div>
+          <h3 class="text-white font-bold text-lg mb-3">Set your schedule</h3>
+          <p class="text-slate-400 text-sm leading-relaxed mb-4">Open <code class="text-sky-400">localhost:8040</code>, go to the Manage tab, define when each domain group is off-limits. Pre-loaded with games, videos, and social defaults.</p>
+          <div class="bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-left">
+            <code class="text-sky-400 font-mono text-xs">http://localhost:8040</code>
+          </div>
+        </div>
+
+        <!-- Step 3 -->
+        <div class="relative text-center">
+          <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-sky-500/10 border border-sky-500/20 text-sky-400 font-extrabold text-2xl mb-6 relative z-10">
+            3
+          </div>
+          <h3 class="text-white font-bold text-lg mb-3">It holds</h3>
+          <p class="text-slate-400 text-sm leading-relaxed mb-4">When the clock hits your window, the block activates. Tabs close. Notifications fire. The only way out requires your admin password.</p>
+          <div class="bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-left flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+            <code class="text-slate-300 font-mono text-xs">Sentinel is enforcing</code>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       ENFORCEMENT MODES
+  ============================================================ -->
+  <section id="modes" class="py-24">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="text-center mb-16">
+        <h2 class="text-3xl sm:text-4xl font-extrabold text-white mb-4">Three levels of enforcement</h2>
+        <p class="text-slate-400 text-lg max-w-xl mx-auto">Start with the default. Escalate if you need to.</p>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+        <!-- Hosts mode -->
+        <div class="bg-[#161616] border border-slate-800 rounded-2xl p-6 flex flex-col">
+          <div class="flex items-start justify-between mb-4">
+            <div>
+              <span class="text-xs font-semibold text-emerald-400 bg-emerald-400/10 px-2.5 py-1 rounded-full">Default</span>
+              <h3 class="text-white font-bold text-xl mt-3">Hosts</h3>
+            </div>
+            <!-- Depth dots: 1/3 -->
+            <div class="flex gap-1 mt-1">
+              <span class="w-2.5 h-2.5 rounded-full bg-sky-400"></span>
+              <span class="w-2.5 h-2.5 rounded-full bg-slate-700"></span>
+              <span class="w-2.5 h-2.5 rounded-full bg-slate-700"></span>
+            </div>
+          </div>
+          <p class="text-slate-400 text-sm leading-relaxed mb-5">Edits <code class="text-slate-300">/etc/hosts</code> (macOS) or the Windows hosts file. Blocked entries are atomically rewritten between Sentinel-managed markers — other entries untouched.</p>
+          <ul class="space-y-2 mb-6 flex-1">
+            <li class="flex items-center gap-2 text-sm text-slate-300"><span class="text-emerald-400">✓</span> No port binding</li>
+            <li class="flex items-center gap-2 text-sm text-slate-300"><span class="text-emerald-400">✓</span> Works in every app</li>
+            <li class="flex items-center gap-2 text-sm text-slate-300"><span class="text-emerald-400">✓</span> macOS + Windows</li>
+            <li class="flex items-center gap-2 text-sm text-slate-400"><span class="text-slate-600">✗</span> No wildcard subdomains</li>
+          </ul>
+          <div class="bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 mt-auto">
+            <code class="text-slate-400 font-mono text-xs">sudo sentinel --set-mode hosts</code>
+          </div>
+        </div>
+
+        <!-- DNS mode -->
+        <div class="bg-[#161616] border border-sky-500/30 rounded-2xl p-6 flex flex-col relative">
+          <div class="flex items-start justify-between mb-4">
+            <div>
+              <span class="text-xs font-semibold text-sky-400 bg-sky-400/10 px-2.5 py-1 rounded-full">Advanced</span>
+              <h3 class="text-white font-bold text-xl mt-3">DNS</h3>
+            </div>
+            <!-- Depth dots: 2/3 -->
+            <div class="flex gap-1 mt-1">
+              <span class="w-2.5 h-2.5 rounded-full bg-sky-400"></span>
+              <span class="w-2.5 h-2.5 rounded-full bg-sky-400"></span>
+              <span class="w-2.5 h-2.5 rounded-full bg-slate-700"></span>
+            </div>
+          </div>
+          <p class="text-slate-400 text-sm leading-relaxed mb-5">Runs a local DNS proxy on <code class="text-slate-300">127.0.0.1:53</code>. Blocked domains return <code class="text-slate-300">0.0.0.0</code>; everything else forwards to your upstream resolver with automatic failover.</p>
+          <ul class="space-y-2 mb-6 flex-1">
+            <li class="flex items-center gap-2 text-sm text-slate-300"><span class="text-emerald-400">✓</span> Wildcard subdomain matching</li>
+            <li class="flex items-center gap-2 text-sm text-slate-300"><span class="text-emerald-400">✓</span> macOS + Windows</li>
+            <li class="flex items-center gap-2 text-sm text-slate-300"><span class="text-emerald-400">✓</span> Primary + backup DNS failover</li>
+            <li class="flex items-center gap-2 text-sm text-slate-400"><span class="text-slate-600">✗</span> Requires OS DNS redirect</li>
+          </ul>
+          <div class="bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 mt-auto">
+            <code class="text-slate-400 font-mono text-xs">sudo sentinel --set-mode dns</code>
+          </div>
+        </div>
+
+        <!-- Strict mode -->
+        <div class="bg-[#161616] border border-slate-800 rounded-2xl p-6 flex flex-col">
+          <div class="flex items-start justify-between mb-4">
+            <div>
+              <span class="text-xs font-semibold text-purple-400 bg-purple-400/10 px-2.5 py-1 rounded-full">Strict</span>
+              <h3 class="text-white font-bold text-xl mt-3">Strict</h3>
+            </div>
+            <!-- Depth dots: 3/3 -->
+            <div class="flex gap-1 mt-1">
+              <span class="w-2.5 h-2.5 rounded-full bg-sky-400"></span>
+              <span class="w-2.5 h-2.5 rounded-full bg-sky-400"></span>
+              <span class="w-2.5 h-2.5 rounded-full bg-sky-400"></span>
+            </div>
+          </div>
+          <p class="text-slate-400 text-sm leading-relaxed mb-5">DNS proxy plus a <code class="text-slate-300">pf</code> (Packet Filter) anchor that drops outbound packets to blocked IPs at the kernel level. For when DNS isn't enough.</p>
+          <ul class="space-y-2 mb-6 flex-1">
+            <li class="flex items-center gap-2 text-sm text-slate-300"><span class="text-emerald-400">✓</span> Kernel-level IP blocking</li>
+            <li class="flex items-center gap-2 text-sm text-slate-300"><span class="text-emerald-400">✓</span> Beats hard-coded resolvers</li>
+            <li class="flex items-center gap-2 text-sm text-slate-400"><span class="text-amber-400">!</span> macOS only</li>
+            <li class="flex items-center gap-2 text-sm text-slate-400"><span class="text-slate-600">✗</span> Degrades to DNS if pf fails</li>
+          </ul>
+          <div class="bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 mt-auto">
+            <code class="text-slate-400 font-mono text-xs">sudo sentinel --set-mode strict</code>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       PLATFORM SUPPORT
+  ============================================================ -->
+  <section class="py-24 bg-[#0f1117]">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="text-center mb-12">
+        <h2 class="text-3xl sm:text-4xl font-extrabold text-white mb-4">Platform support</h2>
+      </div>
+
+      <div class="overflow-x-auto rounded-2xl border border-slate-800">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="bg-[#161616] border-b border-slate-800">
+              <th class="text-left px-6 py-4 text-slate-300 font-semibold">Feature</th>
+              <th class="px-6 py-4 text-center text-slate-300 font-semibold">
+                <div class="flex items-center justify-center gap-1.5">
+                  <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+                  macOS Apple Silicon
+                </div>
+              </th>
+              <th class="px-6 py-4 text-center text-slate-300 font-semibold">
+                <div class="flex items-center justify-center gap-1.5">
+                  <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+                  macOS Intel
+                </div>
+              </th>
+              <th class="px-6 py-4 text-center text-slate-300 font-semibold">
+                <div class="flex items-center justify-center gap-1.5">
+                  <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
+                  Windows x64
+                </div>
+              </th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-800/50">
+            <tr class="bg-[#111111] hover:bg-[#161616] transition-colors">
+              <td class="px-6 py-3.5 text-slate-300">Hosts-file blocking</td>
+              <td class="px-6 py-3.5 text-center text-emerald-400">✓</td>
+              <td class="px-6 py-3.5 text-center text-emerald-400">✓</td>
+              <td class="px-6 py-3.5 text-center text-emerald-400">✓</td>
+            </tr>
+            <tr class="bg-[#111111] hover:bg-[#161616] transition-colors">
+              <td class="px-6 py-3.5 text-slate-300">DNS proxy blocking</td>
+              <td class="px-6 py-3.5 text-center text-emerald-400">✓</td>
+              <td class="px-6 py-3.5 text-center text-emerald-400">✓</td>
+              <td class="px-6 py-3.5 text-center text-emerald-400">✓</td>
+            </tr>
+            <tr class="bg-[#111111] hover:bg-[#161616] transition-colors">
+              <td class="px-6 py-3.5 text-slate-300">Firewall-layer (strict mode)</td>
+              <td class="px-6 py-3.5 text-center text-emerald-400">✓</td>
+              <td class="px-6 py-3.5 text-center text-emerald-400">✓</td>
+              <td class="px-6 py-3.5 text-center text-slate-600">✗</td>
+            </tr>
+            <tr class="bg-[#111111] hover:bg-[#161616] transition-colors">
+              <td class="px-6 py-3.5 text-slate-300">Browser tab closing</td>
+              <td class="px-6 py-3.5 text-center text-emerald-400 text-xs">Chrome, Safari</td>
+              <td class="px-6 py-3.5 text-center text-emerald-400 text-xs">Chrome, Safari</td>
+              <td class="px-6 py-3.5 text-center text-slate-600">✗</td>
+            </tr>
+            <tr class="bg-[#111111] hover:bg-[#161616] transition-colors">
+              <td class="px-6 py-3.5 text-slate-300">3-minute pre-block notification</td>
+              <td class="px-6 py-3.5 text-center text-emerald-400">✓</td>
+              <td class="px-6 py-3.5 text-center text-emerald-400">✓</td>
+              <td class="px-6 py-3.5 text-center text-slate-600">✗</td>
+            </tr>
+            <tr class="bg-[#111111] hover:bg-[#161616] transition-colors">
+              <td class="px-6 py-3.5 text-slate-300">Auto-start on boot</td>
+              <td class="px-6 py-3.5 text-center text-emerald-400">✓</td>
+              <td class="px-6 py-3.5 text-center text-emerald-400">✓</td>
+              <td class="px-6 py-3.5 text-center text-emerald-400">✓</td>
+            </tr>
+            <tr class="bg-[#111111] hover:bg-[#161616] transition-colors">
+              <td class="px-6 py-3.5 text-slate-300">One-command clean uninstall</td>
+              <td class="px-6 py-3.5 text-center text-emerald-400">✓</td>
+              <td class="px-6 py-3.5 text-center text-emerald-400">✓</td>
+              <td class="px-6 py-3.5 text-center text-emerald-400">✓</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       FAQ
+  ============================================================ -->
+  <section id="faq" class="py-24">
+    <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="text-center mb-16">
+        <h2 class="text-3xl sm:text-4xl font-extrabold text-white mb-4">FAQ</h2>
+        <p class="text-slate-400 text-lg">The honest answers.</p>
+      </div>
+
+      <div x-data="{ active: 0 }" class="space-y-3">
+
+        <template x-for="(item, i) in [
+          {
+            q: `Doesn't this just edit the hosts file? Can't I undo it?`,
+            a: `Yes, the default (hosts) mode edits /etc/hosts. But reverting it requires your admin password. That's the point — it's not impossible to undo, it just adds enough friction to interrupt an impulse. For stronger enforcement, use DNS or strict mode.`
+          },
+          {
+            q: `What if I use a VPN?`,
+            a: `VPNs reroute your traffic but DNS resolution still goes through the system resolver (or Sentinel's local proxy in DNS/strict mode). In strict mode, pf drops IP-level packets too, so VPN tunnels that don't fully capture the system resolver are also covered.`
+          },
+          {
+            q: `Will it affect apps other than browsers?`,
+            a: `Yes. Sentinel blocks at the network layer, so every app — Electron apps, Discord, games, native clients — is blocked if the domain is in your schedule. That's the advantage over browser extensions.`
+          },
+          {
+            q: `Does the web dashboard expose my data to the internet?`,
+            a: `No. The dashboard listens on 127.0.0.1 only and is never reachable from outside your machine. It also requires an auth token (auto-generated at install time) for every API write, so other processes on the same machine can't make changes without it.`
+          },
+          {
+            q: `How do I take a legitimate break?`,
+            a: `Open the dashboard at localhost:8040, go to the Manage tab, and use Pause (up to 4 hours). Or via the API: curl -X POST http://localhost:8040/api/pause -H \"X-Auth-Token: <token>\" -d '{\"minutes\":30}'. The pause is written to config.json and clears automatically when time's up.`
+          },
+          {
+            q: `How do I uninstall?`,
+            a: `Run sudo sentinel clean. It stops the service, removes all hosts entries, clears DNS and pf rules, unregisters the service, and optionally deletes the config directory. Leaves your machine exactly as it was before installation.`
+          }
+        ]" :key="i">
+          <div class="bg-[#161616] border border-slate-800 rounded-2xl overflow-hidden">
+            <button
+              @click="active === i ? active = null : active = i"
+              class="w-full flex items-center justify-between px-6 py-5 text-left text-white font-semibold hover:text-sky-400 transition-colors"
+              :class="active === i ? 'text-sky-400' : ''"
+            >
+              <span x-text="item.q"></span>
+              <svg class="w-5 h-5 shrink-0 ml-4 transition-transform" :class="active === i ? 'rotate-45' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+              </svg>
+            </button>
+            <div x-show="active === i" x-transition x-cloak class="px-6 pb-5 text-slate-400 text-sm leading-relaxed" x-text="item.a"></div>
+          </div>
+        </template>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       DOWNLOAD CTA
+  ============================================================ -->
+  <section id="download" class="py-24 bg-gradient-to-b from-[#0f1117] to-[#0d0d0d] relative overflow-hidden">
+    <div class="glow-blob w-96 h-96 bg-sky-500/8 top-0 left-1/2 -translate-x-1/2 -translate-y-1/2"></div>
+    <div class="relative max-w-2xl mx-auto px-4 sm:px-6 text-center">
+      <img src="assets/img/logo2.png" alt="Sentinel" class="h-16 w-auto mx-auto mb-6 drop-shadow-[0_0_20px_rgba(56,189,248,0.25)]">
+      <h2 class="text-3xl sm:text-4xl font-extrabold text-white mb-4">Ready to focus?</h2>
+      <p class="text-slate-400 text-lg mb-10">Install in one command. Remove in one command. Works immediately.</p>
+
+      <!-- Install one-liner -->
+      <div class="flex items-center gap-3 bg-slate-900 border border-slate-700 rounded-xl px-4 py-3.5 text-sm mb-6">
+        <span class="text-slate-500 shrink-0">$</span>
+        <code class="text-emerald-400 font-mono text-xs sm:text-sm flex-1 text-left truncate">curl -fsSL https://github.com/vsangava/sentinel/releases/latest/download/install.sh | sudo bash</code>
+        <button x-data="{ copied: false }"
+                @click="navigator.clipboard.writeText('curl -fsSL https://github.com/vsangava/sentinel/releases/latest/download/install.sh | sudo bash'); copied = true; setTimeout(() => copied = false, 2000)"
+                class="shrink-0 text-slate-500 hover:text-slate-200 transition-colors"
+                :title="copied ? 'Copied!' : 'Copy'">
+          <svg x-show="!copied" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+          <svg x-show="copied" x-cloak class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+        </button>
+      </div>
+
+      <!-- Download buttons -->
+      <div class="flex flex-col items-center gap-4 mb-4">
+        <a href="https://github.com/vsangava/sentinel/releases/latest/download/sentinel-macos-arm64"
+           class="inline-flex items-center gap-3 bg-sky-400 hover:bg-sky-500 text-[#0d0d0d] font-bold px-8 py-4 rounded-2xl transition-colors text-base shadow-lg shadow-sky-500/20">
+          <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+          <span>
+            Download for macOS
+            <span class="block text-xs font-normal opacity-70 mt-0.5">Apple Silicon (M1 and later)</span>
+          </span>
+        </a>
+        <div class="flex items-center gap-5 text-sm text-slate-500">
+          <a href="https://github.com/vsangava/sentinel/releases/latest" target="_blank" rel="noopener"
+             class="flex items-center gap-1.5 hover:text-slate-300 transition-colors">
+            <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+            macOS Intel
+          </a>
+          <span class="text-slate-700">·</span>
+          <a href="https://github.com/vsangava/sentinel/releases/latest/download/sentinel-windows-amd64.exe"
+             class="flex items-center gap-1.5 hover:text-slate-300 transition-colors">
+            <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
+            Windows x64
+          </a>
+        </div>
+      </div>
+      <p class="text-xs text-slate-600">Built with Go · No telemetry · MIT License</p>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       FOOTER
+  ============================================================ -->
+  <footer class="border-t border-slate-800 bg-[#0a0a0a] py-12">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-10 mb-10">
+
+        <!-- Col 1: Brand -->
+        <div>
+          <div class="flex items-center gap-2.5 mb-3">
+            <img src="assets/img/logo2.png" alt="Sentinel" class="h-7 w-auto">
+            <span class="text-white font-bold">Sentinel</span>
+          </div>
+          <p class="text-slate-500 text-sm leading-relaxed">OS-level productivity blocking for macOS and Windows. Schedule-based, admin-protected, no browser extension.</p>
+          <p class="text-slate-600 text-xs mt-4">Built with Go · No telemetry · localhost-only</p>
+        </div>
+
+        <!-- Col 2: Links -->
+        <div>
+          <h4 class="text-slate-300 font-semibold text-sm mb-4">Resources</h4>
+          <ul class="space-y-2.5">
+            <li><a href="https://github.com/vsangava/sentinel/releases/latest" target="_blank" rel="noopener" class="text-slate-500 hover:text-slate-300 text-sm transition-colors">Latest Release</a></li>
+            <li><a href="https://github.com/vsangava/sentinel/issues" target="_blank" rel="noopener" class="text-slate-500 hover:text-slate-300 text-sm transition-colors">Report an Issue</a></li>
+            <li><a href="https://github.com/vsangava/sentinel/blob/main/README.md" target="_blank" rel="noopener" class="text-slate-500 hover:text-slate-300 text-sm transition-colors">Documentation</a></li>
+            <li><a href="https://github.com/vsangava/sentinel/blob/main/TROUBLESHOOTING.md" target="_blank" rel="noopener" class="text-slate-500 hover:text-slate-300 text-sm transition-colors">Troubleshooting</a></li>
+            <li><a href="https://github.com/vsangava/sentinel" target="_blank" rel="noopener" class="text-slate-500 hover:text-slate-300 text-sm transition-colors flex items-center gap-1.5">
+              <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
+              GitHub
+            </a></li>
+          </ul>
+        </div>
+
+        <!-- Col 3: Downloads -->
+        <div>
+          <h4 class="text-slate-300 font-semibold text-sm mb-4">Downloads</h4>
+          <ul class="space-y-2.5">
+            <li>
+              <a href="https://github.com/vsangava/sentinel/releases/latest/download/sentinel-macos-arm64"
+                 class="text-slate-500 hover:text-slate-300 text-sm transition-colors flex items-center gap-2">
+                <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+                macOS Apple Silicon
+              </a>
+            </li>
+            <li>
+              <a href="https://github.com/vsangava/sentinel/releases/latest"
+                 target="_blank" rel="noopener"
+                 class="text-slate-500 hover:text-slate-300 text-sm transition-colors flex items-center gap-2">
+                <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+                macOS Intel
+              </a>
+            </li>
+            <li>
+              <a href="https://github.com/vsangava/sentinel/releases/latest/download/sentinel-windows-amd64.exe"
+                 class="text-slate-500 hover:text-slate-300 text-sm transition-colors flex items-center gap-2">
+                <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
+                Windows x64
+              </a>
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="border-t border-slate-800 pt-6 flex flex-col sm:flex-row items-center justify-between gap-2">
+        <p class="text-slate-600 text-xs">MIT License · <a href="https://github.com/vsangava/sentinel" class="hover:text-slate-400 transition-colors">github.com/vsangava/sentinel</a></p>
+        <p class="text-slate-700 text-xs">Built with Go · No telemetry</p>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>
