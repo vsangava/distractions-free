@@ -17,7 +17,11 @@ jobs:
             goos: darwin
             goarch: arm64
             output_name: sentinel-macos-arm64
-          # Windows build
+          # CGO_ENABLED=0 means pure Go — cross-compile Intel from Ubuntu, no macOS runner needed
+          - os: ubuntu-latest
+            goos: darwin
+            goarch: amd64
+            output_name: sentinel-macos-amd64
           - os: windows-latest
             goos: windows
             goarch: amd64
