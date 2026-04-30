@@ -132,6 +132,46 @@ func (g *MacOSAppleScriptGenerator) GenerateCloseTabsScript(domains []string) st
 				end repeat
 			end tell
 		end if
+
+		if application "Arc" is running then
+			tell application "Arc"
+				set tabsToClose to {}
+				repeat with w in windows
+					repeat with t in tabs of w
+						set tabURL to URL of t
+						repeat with d in domainsToBlock
+							if tabURL contains d then
+								set end of tabsToClose to t
+								exit repeat
+							end if
+						end repeat
+					end repeat
+				end repeat
+				repeat with t in tabsToClose
+					close t
+				end repeat
+			end tell
+		end if
+
+		if application "Brave Browser" is running then
+			tell application "Brave Browser"
+				set tabsToClose to {}
+				repeat with w in windows
+					repeat with t in tabs of w
+						set tabURL to URL of t
+						repeat with d in domainsToBlock
+							if tabURL contains d then
+								set end of tabsToClose to t
+								exit repeat
+							end if
+						end repeat
+					end repeat
+				end repeat
+				repeat with t in tabsToClose
+					close t
+				end repeat
+			end tell
+		end if
 	`, domainListStr)
 }
 
@@ -453,6 +493,40 @@ func getOpenBrowserDomains(domains []string) []string {
 
 		if application "Safari" is running then
 			tell application "Safari"
+				repeat with w in windows
+					repeat with t in tabs of w
+						set tabURL to URL of t
+						repeat with d in domainsToCheck
+							if tabURL contains d then
+								if matchedDomains does not contain d then
+									set end of matchedDomains to d
+								end if
+							end if
+						end repeat
+					end repeat
+				end repeat
+			end tell
+		end if
+
+		if application "Arc" is running then
+			tell application "Arc"
+				repeat with w in windows
+					repeat with t in tabs of w
+						set tabURL to URL of t
+						repeat with d in domainsToCheck
+							if tabURL contains d then
+								if matchedDomains does not contain d then
+									set end of matchedDomains to d
+								end if
+							end if
+						end repeat
+					end repeat
+				end repeat
+			end tell
+		end if
+
+		if application "Brave Browser" is running then
+			tell application "Brave Browser"
 				repeat with w in windows
 					repeat with t in tabs of w
 						set tabURL to URL of t

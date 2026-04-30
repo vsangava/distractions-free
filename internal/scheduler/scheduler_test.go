@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -662,5 +663,16 @@ func TestCheckWarningDomainsAtTime_OvernightSlot_NoWarningInMorning(t *testing.T
 
 	if len(warnings) != 0 {
 		t.Errorf("expected no warning at 07:57 Tuesday (morning-end of overnight slot has no warning); got %v", warnings)
+	}
+}
+
+func TestGenerateCloseTabsScript_IncludesArcAndBrave(t *testing.T) {
+	g := &MacOSAppleScriptGenerator{}
+	script := g.GenerateCloseTabsScript([]string{"youtube.com"})
+
+	for _, app := range []string{"Google Chrome", "Safari", "Arc", "Brave Browser"} {
+		if !strings.Contains(script, app) {
+			t.Errorf("GenerateCloseTabsScript: expected block for %q but not found in script", app)
+		}
 	}
 }
