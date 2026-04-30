@@ -69,7 +69,23 @@ Browser extensions are easy to bypass — one click to disable, and kids know it
 
 ## Install
 
-### 1. Download the binary
+### Option A — One-liner (recommended)
+
+```bash
+curl -fsSL https://github.com/vsangava/sentinel/releases/latest/download/install.sh | sudo bash
+```
+
+The script detects your Mac's architecture, downloads the right binary, removes the macOS quarantine flag, installs it to `/usr/local/bin/sentinel`, registers the service, and starts it.
+
+Prefer to inspect before running?
+
+```bash
+curl -fsSL https://github.com/vsangava/sentinel/releases/latest/download/install.sh -o install.sh
+less install.sh
+sudo bash install.sh
+```
+
+### Option B — Manual (two commands)
 
 **[→ Download from the latest release](https://github.com/vsangava/sentinel/releases/latest)**
 
@@ -79,21 +95,14 @@ Browser extensions are easy to bypass — one click to disable, and kids know it
 | macOS Intel | `sentinel-macos-amd64` |
 | Windows x86_64 | `sentinel-windows-amd64.exe` |
 
-On macOS, make it executable after downloading:
 ```bash
-chmod +x sentinel-macos-*
+chmod +x sentinel-macos-arm64          # or sentinel-macos-amd64 on Intel
+sudo ./sentinel-macos-arm64 --setup
 ```
 
-### 2. Install and start the service
+`--setup` copies the binary to `/usr/local/bin/sentinel`, registers the service with launchd, and starts it. You can delete the downloaded file afterwards.
 
-```bash
-sudo ./sentinel install
-sudo ./sentinel start
-```
-
-That's it for most users. The service starts at login from this point on.
-
-### 3. Verify
+### Verify
 
 Open `http://localhost:8040` — the dashboard should load. It comes pre-loaded with sample rules for `games`, `videos`, and `social` groups. Edit the config to match your needs ([Configuration](#configuration)).
 
@@ -295,8 +304,8 @@ sudo ./sentinel start      # restart to pick it up
 The all-in-one `--clean` command undoes every system change the daemon made: stops the service, removes hosts entries, removes the pf anchor, resets DNS on every interface pointing at `127.0.0.1`, flushes the resolver cache, unregisters the service, removes the config directory, and verifies port 53 is free.
 
 ```bash
-sudo ./sentinel --clean          # asks before deleting config
-sudo ./sentinel --clean --yes    # deletes config without asking
+sudo sentinel --clean             # asks before deleting config
+sudo sentinel --clean --confirm   # deletes config without asking
 ```
 
 If you'd rather drive the steps yourself:
@@ -314,13 +323,15 @@ sudo rm -rf "/Library/Application Support/Sentinel"
 ## Command-line reference
 
 ```
-sentinel <subcommand>           # service management
-sentinel [--flag]               # local / test mode
-sudo sentinel --clean [--yes]   # forensic uninstall
+sentinel <subcommand>                    # service management
+sentinel [--flag]                        # local / test mode
+sudo sentinel --setup                    # install + start in one command
+sudo sentinel --clean [--confirm|--yes]  # forensic uninstall
 ```
 
 | Command / flag | Privileges | What it does | More |
 |---|---|---|---|
+| `--setup` | sudo | Copy binary to `/usr/local/bin/sentinel`, register service, and start it (macOS: copies; Windows: install+start only) | [Install](#install) |
 | `install` | sudo | Register the system service (launchd / Windows Service) | [Install](#install) |
 | `uninstall` | sudo | Remove the service registration | [Uninstall](#uninstall--cleanup) |
 | `start` | sudo | Start the service in the background | [Install](#install) |
@@ -329,7 +340,7 @@ sudo sentinel --clean [--yes]   # forensic uninstall
 | `run` | sudo | Run as if launched by the service supervisor (foreground) | — |
 | `--no-service` | none | Run the daemon in the foreground using `./config.json` | [Test utilities](#test-utilities) |
 | `--strict` | sudo | Set `enforcement_mode` to `"strict"` in config and exit | [Switching modes](#switching-modes) |
-| `--clean [--yes]` | sudo | Undo every system change; use before deleting the binary | [Uninstall](#uninstall--cleanup) |
+| `--clean [--confirm\|--yes]` | sudo | Undo every system change; use before deleting the binary | [Uninstall](#uninstall--cleanup) |
 | `--test-query "<YYYY-MM-DD HH:MM>" <domain>` | none | Check whether a domain would be blocked at a specific time | [Test utilities](#test-utilities) |
 | `--test-web` | none | Start the dashboard standalone without installing the service | [Test utilities](#test-utilities) |
 | `--test-applescript` | none | Generate and optionally run the tab-closing AppleScript (macOS) | [Test utilities](#test-utilities) |
@@ -372,6 +383,8 @@ make build-all     # macOS arm64 + amd64 + Windows amd64
 | `make test` | `go test ./...` |
 | `make release` | `test` + `build-all` + `verify-binaries` (pre-release sanity check) |
 | `make clean` | Remove built binaries |
+| `make dev-install` | Build and install the service locally (`build` + `--setup`); requires sudo |
+| `make dev-uninstall` | Uninstall and fully clean up the service; requires sudo |
 
 ## Running tests
 

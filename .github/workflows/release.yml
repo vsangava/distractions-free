@@ -49,3 +49,18 @@ jobs:
           files: ${{ matrix.output_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-installer:
+    name: Attach install.sh to Release
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Upload install.sh to Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: install.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

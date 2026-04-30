@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -112,6 +113,50 @@ var svcConfig = &service.Config{
 	Description: "Local DNS proxy for blocking distractions.",
 }
 
+func runSetup() {
+	if !cleanup.IsPrivileged() {
+		log.Fatal("--setup requires root/admin privileges. Run with: sudo ./sentinel --setup")
+	}
+
+	prg := &program{}
+	s, err := service.New(prg, svcConfig)
+	if err != nil {
+		log.Fatalf("--setup: could not create service handle: %v", err)
+	}
+
+	if runtime.GOOS == "darwin" {
+		dest := "/usr/local/bin/sentinel"
+		if _, err := os.Stat(dest); err == nil {
+			log.Fatalf("Sentinel is already installed at %s. Run 'sudo sentinel --clean' to remove it first.", dest)
+		}
+		src, err := os.Executable()
+		if err != nil {
+			log.Fatalf("--setup: could not resolve binary path: %v", err)
+		}
+		data, err := os.ReadFile(src)
+		if err != nil {
+			log.Fatalf("--setup: could not read binary: %v", err)
+		}
+		if err := os.MkdirAll("/usr/local/bin", 0755); err != nil {
+			log.Fatalf("--setup: could not create /usr/local/bin: %v", err)
+		}
+		if err := os.WriteFile(dest, data, 0755); err != nil {
+			log.Fatalf("--setup: could not write binary to %s: %v", dest, err)
+		}
+		fmt.Printf("Installed binary → %s\n", dest)
+	}
+
+	if err := service.Control(s, "install"); err != nil {
+		log.Fatalf("--setup: service install failed: %v", err)
+	}
+	if err := service.Control(s, "start"); err != nil {
+		log.Fatalf("--setup: service start failed: %v", err)
+	}
+
+	fmt.Println("Sentinel installed and running.")
+	fmt.Println("Open http://localhost:8040 to configure.")
+}
+
 func runClean(yes bool) {
 	if !cleanup.IsPrivileged() {
 		log.Fatal("--clean requires root/admin privileges. Run with: sudo ./sentinel --clean")
@@ -191,10 +236,17 @@ func runClean(yes bool) {
 }
 
 func main() {
+	// --setup installs the binary to /usr/local/bin (macOS), registers the service, and starts it.
+	// Usage: sudo ./sentinel --setup
+	if len(os.Args) > 1 && os.Args[1] == "--setup" {
+		runSetup()
+		return
+	}
+
 	// --clean safely removes all system-level changes made by sentinel.
-	// Usage: sudo ./sentinel --clean [--yes]
+	// Usage: sudo ./sentinel --clean [--confirm|--yes]
 	if len(os.Args) > 1 && os.Args[1] == "--clean" {
-		yes := len(os.Args) > 2 && os.Args[2] == "--yes"
+		yes := len(os.Args) > 2 && (os.Args[2] == "--yes" || os.Args[2] == "--confirm")
 		runClean(yes)
 		return
 	}

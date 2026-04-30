@@ -1,4 +1,4 @@
-.PHONY: help build build-all test clean release check-release
+.PHONY: help build build-all test clean release check-release dev-install dev-uninstall
 
 VERSION ?= dev
 BINARY_NAME := sentinel
@@ -15,6 +15,10 @@ help:
 	@echo "  release            Pre-release check: build all + test + verify binaries"
 	@echo "  clean              Remove built binaries"
 	@echo "  check-release      Same as 'release' (alias)"
+	@echo ""
+	@echo "Developer install targets:"
+	@echo "  dev-install        Build and install the service locally (requires sudo)"
+	@echo "  dev-uninstall      Uninstall and clean up the service (requires sudo)"
 	@echo ""
 	@echo "Example release workflow:"
 	@echo "  make release"
@@ -70,6 +74,14 @@ release: test build-all verify-binaries
 
 # Alias for release
 check-release: release
+
+# Build and install service locally (developer use only)
+dev-install: build
+	sudo ./sentinel --setup
+
+# Uninstall and clean up the service (developer use only)
+dev-uninstall:
+	sudo /usr/local/bin/sentinel --clean --confirm
 
 # Verify binaries exist and have content
 verify-binaries:
