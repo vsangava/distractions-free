@@ -48,10 +48,17 @@ func GetDNSResponse(r *dns.Msg, blockedDomainsList map[string]bool, primaryDNS, 
 	q := r.Question[0]
 	domain := strings.TrimSuffix(q.Name, ".")
 
-	if IsDomainBlocked(domain, blockedDomainsList) && q.Qtype == dns.TypeA {
-		rr, _ := dns.NewRR(q.Name + " 60 IN A 0.0.0.0")
-		m.Answer = append(m.Answer, rr)
-		return m, nil
+	if IsDomainBlocked(domain, blockedDomainsList) {
+		switch q.Qtype {
+		case dns.TypeA:
+			rr, _ := dns.NewRR(q.Name + " 60 IN A 0.0.0.0")
+			m.Answer = append(m.Answer, rr)
+			return m, nil
+		case dns.TypeAAAA:
+			rr, _ := dns.NewRR(q.Name + " 60 IN AAAA ::")
+			m.Answer = append(m.Answer, rr)
+			return m, nil
+		}
 	}
 
 	// Forward to upstream DNS

@@ -12,9 +12,10 @@ import (
 )
 
 const (
-	blockBegin = "# sentinel:begin"
-	blockEnd   = "# sentinel:end"
-	blockingIP = "0.0.0.0"
+	blockBegin  = "# sentinel:begin"
+	blockEnd    = "# sentinel:end"
+	blockingIP  = "0.0.0.0"
+	blockingIP6 = "::1"
 )
 
 // subdomainPrefixes are prepended to each blocked domain because /etc/hosts
@@ -31,6 +32,7 @@ func GenerateHostsEntries(domains []string) []string {
 	for _, domain := range domains {
 		for _, prefix := range subdomainPrefixes {
 			entries = append(entries, blockingIP+" "+prefix+domain)
+			entries = append(entries, blockingIP6+" "+prefix+domain)
 		}
 	}
 	return entries
@@ -74,9 +76,11 @@ func (e *HostsEnforcer) Activate(domains []string) error {
 	var newEntries []string
 	for _, domain := range domains {
 		for _, prefix := range subdomainPrefixes {
-			entry := blockingIP + " " + prefix + domain
-			if !existing[entry] {
-				newEntries = append(newEntries, entry)
+			for _, ip := range []string{blockingIP, blockingIP6} {
+				entry := ip + " " + prefix + domain
+				if !existing[entry] {
+					newEntries = append(newEntries, entry)
+				}
 			}
 		}
 	}
@@ -105,7 +109,9 @@ func (e *HostsEnforcer) Deactivate(domains []string) error {
 	toRemove := make(map[string]bool)
 	for _, domain := range domains {
 		for _, prefix := range subdomainPrefixes {
-			toRemove[blockingIP+" "+prefix+domain] = true
+			for _, ip := range []string{blockingIP, blockingIP6} {
+				toRemove[ip+" "+prefix+domain] = true
+			}
 		}
 	}
 

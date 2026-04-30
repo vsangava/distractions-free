@@ -88,28 +88,52 @@ func TestGetDNSResponse_EmptyQuestion(t *testing.T) {
 	}
 }
 
-func TestGetDNSResponse_NonATypeQueryBlocked(t *testing.T) {
+func TestGetDNSResponse_BlockedDomainAAAAReturnsZeroIPv6(t *testing.T) {
 	blockedDomains := map[string]bool{
 		"reddit.com": true,
 	}
 
-	// Query for AAAA record (IPv6) of blocked domain
 	msg := new(dns.Msg)
 	msg.SetQuestion("reddit.com.", dns.TypeAAAA)
 
 	response, err := GetDNSResponse(msg, blockedDomains, "8.8.8.8:53", "1.1.1.1:53")
-
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	// Non-A queries for blocked domains should still forward (not block)
-	// This tests that we only block A records for blocked domains
-	if len(response.Answer) > 0 {
-		if a, ok := response.Answer[0].(*dns.AAAA); ok {
-			// Got a valid AAAA response, which is correct behavior
-			if a.AAAA.String() == "::" {
-				t.Errorf("unexpected :: response for AAAA query")
+	if len(response.Answer) == 0 {
+		t.Fatal("expected answer record for blocked AAAA query")
+	}
+
+	aaaa, ok := response.Answer[0].(*dns.AAAA)
+	if !ok {
+		t.Fatalf("expected AAAA record, got %T", response.Answer[0])
+	}
+	if aaaa.AAAA.String() != "::" {
+		t.Errorf("expected :: for blocked AAAA query, got %s", aaaa.AAAA.String())
+	}
+}
+
+func TestGetDNSResponse_AllowedDomainAAAAForwarded(t *testing.T) {
+	blockedDomains := map[string]bool{
+		"reddit.com": true,
+	}
+
+	msg := new(dns.Msg)
+	msg.SetQuestion("google.com.", dns.TypeAAAA)
+
+	response, err := GetDNSResponse(msg, blockedDomains, "8.8.8.8:53", "1.1.1.1:53")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if response == nil {
+		t.Fatal("expected response, got nil")
+	}
+	// Must not return the blocking sentinel address.
+	for _, rr := range response.Answer {
+		if aaaa, ok := rr.(*dns.AAAA); ok {
+			if aaaa.AAAA.String() == "::" {
+				t.Errorf("allowed domain got blocking response :: for AAAA")
 			}
 		}
 	}

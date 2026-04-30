@@ -43,6 +43,9 @@ func TestHostsEnforcer_ActivateAddsEntries(t *testing.T) {
 		"0.0.0.0 youtube.com",
 		"0.0.0.0 www.youtube.com",
 		"0.0.0.0 m.youtube.com",
+		"::1 youtube.com",
+		"::1 www.youtube.com",
+		"::1 m.youtube.com",
 	} {
 		if !strings.Contains(content, want) {
 			t.Errorf("expected %q in hosts file\n%s", want, content)
@@ -60,7 +63,10 @@ func TestHostsEnforcer_ActivateIsIdempotent(t *testing.T) {
 
 	content := readFile(t, e.hostsPath)
 	if got := strings.Count(content, "0.0.0.0 youtube.com"); got != 1 {
-		t.Errorf("expected exactly 1 entry for youtube.com, got %d\n%s", got, content)
+		t.Errorf("expected exactly 1 IPv4 entry for youtube.com, got %d\n%s", got, content)
+	}
+	if got := strings.Count(content, "::1 youtube.com"); got != 1 {
+		t.Errorf("expected exactly 1 IPv6 entry for youtube.com, got %d\n%s", got, content)
 	}
 }
 
@@ -74,7 +80,10 @@ func TestHostsEnforcer_DeactivateRemovesEntries(t *testing.T) {
 
 	content := readFile(t, e.hostsPath)
 	if strings.Contains(content, "0.0.0.0 youtube.com") {
-		t.Errorf("youtube.com should be removed after Deactivate\n%s", content)
+		t.Errorf("IPv4 entry for youtube.com should be removed after Deactivate\n%s", content)
+	}
+	if strings.Contains(content, "::1 youtube.com") {
+		t.Errorf("IPv6 entry for youtube.com should be removed after Deactivate\n%s", content)
 	}
 	if !strings.Contains(content, "127.0.0.1 localhost") {
 		t.Error("original entries must be preserved")
@@ -106,7 +115,10 @@ func TestHostsEnforcer_DeactivateAllClearsBlock(t *testing.T) {
 
 	content := readFile(t, e.hostsPath)
 	if strings.Contains(content, "0.0.0.0") {
-		t.Errorf("all block entries should be removed\n%s", content)
+		t.Errorf("all IPv4 block entries should be removed\n%s", content)
+	}
+	if strings.Contains(content, "::1 youtube.com") || strings.Contains(content, "::1 facebook.com") {
+		t.Errorf("all IPv6 block entries should be removed\n%s", content)
 	}
 	if strings.Contains(content, blockBegin) || strings.Contains(content, blockEnd) {
 		t.Errorf("block markers should be removed\n%s", content)
@@ -143,5 +155,26 @@ func TestHostsEnforcer_DeactivateAllOnEmptyFile(t *testing.T) {
 	// DeactivateAll on a file with no managed block should be a no-op.
 	if err := e.DeactivateAll(); err != nil {
 		t.Fatalf("DeactivateAll on clean file: %v", err)
+	}
+}
+
+func TestGenerateHostsEntries_IncludesIPv6(t *testing.T) {
+	entries := GenerateHostsEntries([]string{"example.com"})
+
+	wantIPv4 := "0.0.0.0 example.com"
+	wantIPv6 := "::1 example.com"
+	wantIPv4www := "0.0.0.0 www.example.com"
+	wantIPv6www := "::1 www.example.com"
+
+	got := strings.Join(entries, "\n")
+	for _, want := range []string{wantIPv4, wantIPv6, wantIPv4www, wantIPv6www} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %q in generated entries:\n%s", want, got)
+		}
+	}
+
+	// Each subdomain variant should produce exactly 2 entries (IPv4 + IPv6).
+	if len(entries) != len(subdomainPrefixes)*2 {
+		t.Errorf("expected %d entries (2 per prefix), got %d", len(subdomainPrefixes)*2, len(entries))
 	}
 }
