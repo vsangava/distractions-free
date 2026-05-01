@@ -5,11 +5,33 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/vsangava/sentinel/internal/config"
 )
+
+func TestMain(m *testing.M) {
+	// Use local config so tests don't attempt to create/read the system config
+	// directory (/Library/Application Support/Sentinel on macOS), which requires
+	// root and fails in CI runners.
+	config.UseLocalConfig = true
+	dir, _ := os.Getwd()
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			os.Chdir(dir) //nolint:errcheck
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	os.Exit(m.Run())
+}
 
 func TestConfigHandler_ReturnsJSON(t *testing.T) {
 	// Create a test request and response recorder
@@ -348,11 +370,11 @@ func TestConfigHandler_ValidJSONAfterMarshal(t *testing.T) {
 // zero). This is the --test-web mode scenario: the user edits config in the browser
 // textarea and expects Status to reflect the same config as test-query.
 func TestStatusHandler_UsesPostedConfig(t *testing.T) {
-	now := time.Now()
-	day := now.Weekday().String()
-	start := now.Add(-1 * time.Hour).Format("15:04")
-	end := now.Add(1 * time.Hour).Format("15:04")
+	day := time.Now().Weekday().String()
 
+	// Use a wide window spanning most of the day so the test is not sensitive to
+	// the time-of-day it runs. A now±1h window would produce an overnight slot near
+	// midnight that the scheduler correctly refuses to mark as "currently active".
 	blocked := config.Config{
 		Settings: config.Settings{PrimaryDNS: "8.8.8.8:53", BackupDNS: "1.1.1.1:53"},
 		Groups:   map[string][]string{"video": {"youtube.com"}},
@@ -361,7 +383,7 @@ func TestStatusHandler_UsesPostedConfig(t *testing.T) {
 				Group:    "video",
 				IsActive: true,
 				Schedules: map[string][]config.TimeSlot{
-					day: {{Start: start, End: end}},
+					day: {{Start: "00:01", End: "23:59"}},
 				},
 			},
 		},
