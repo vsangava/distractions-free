@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -191,6 +192,33 @@ func GetConfig() Config {
 	mu.RLock()
 	defer mu.RUnlock()
 	return AppConfig
+}
+
+const factoryPrimaryDNS = "8.8.8.8:53"
+
+// AutoSetPrimaryDNS updates primary_dns only when it still holds the factory
+// default. This lets the first dns/strict mode startup capture whatever DNS
+// the user had before Sentinel, without overwriting deliberate user settings.
+func AutoSetPrimaryDNS(server string) {
+	path, err := GetConfigFilePath()
+	if err != nil {
+		return
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if AppConfig.Settings.PrimaryDNS != factoryPrimaryDNS {
+		return
+	}
+	AppConfig.Settings.PrimaryDNS = server
+	data, err := json.MarshalIndent(AppConfig, "", "  ")
+	if err != nil {
+		return
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		log.Printf("config: could not save auto-detected upstream DNS: %v", err)
+		return
+	}
+	log.Printf("config: auto-detected upstream DNS %s → saved as primary_dns", server)
 }
 
 // ConfigDir returns the OS-specific config directory path without creating it.

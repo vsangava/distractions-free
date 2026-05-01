@@ -371,7 +371,7 @@ These only apply to `dns` and `strict` modes. In `hosts` mode the daemon never b
 
 **`permission denied`** — port 53 is privileged; run with `sudo`.
 
-**`address already in use`** — another process is already listening on port 53. Find it:
+**`address already in use`** — another process is already listening on port 53. Sentinel logs the name of the conflicting process automatically. You can also find it manually:
 
 ```bash
 sudo lsof -i :53 -P -n
@@ -405,6 +405,8 @@ You can also set a backup in case your local resolver is down:
 "primary_dns": "127.0.0.1:5300",
 "backup_dns":  "8.8.8.8:53"
 ```
+
+> **Note:** If your `primary_dns` was still at the factory default (`8.8.8.8:53`) when Sentinel first started in `dns` or `strict` mode, Sentinel auto-detected your previous system DNS and saved it automatically. In that case this step may already be done — check the web UI or config.json before editing.
 
 **Step 3 — Restart Sentinel.**
 

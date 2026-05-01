@@ -3,6 +3,7 @@ package enforcer
 import (
 	"bufio"
 	"log"
+	"net"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -27,7 +28,80 @@ func NewDNSEnforcer(cfg config.Config) *DNSEnforcer {
 
 func (e *DNSEnforcer) Setup() error {
 	proxy.UpdateBlockedDomains(make(map[string]bool))
+	if runtime.GOOS == "darwin" {
+		e.configureSystemDNS()
+	}
 	return nil
+}
+
+// configureSystemDNS detects the current upstream DNS before taking over port 53,
+// saves it as primary_dns if the config is still at factory default, then points
+// every active network interface at the local DNS proxy (127.0.0.1).
+func (e *DNSEnforcer) configureSystemDNS() {
+	if upstream := detectSystemDNS(); upstream != "" {
+		config.AutoSetPrimaryDNS(upstream)
+	}
+	out, err := exec.Command("networksetup", "-listallnetworkservices").Output()
+	if err != nil {
+		exec.Command("networksetup", "-setdnsservers", "Wi-Fi", "127.0.0.1").Run()
+		flushDNSCache()
+		return
+	}
+	sc := bufio.NewScanner(strings.NewReader(string(out)))
+	for sc.Scan() {
+		line := sc.Text()
+		if strings.HasPrefix(line, "An asterisk") || strings.TrimSpace(line) == "" {
+			continue
+		}
+		name := strings.TrimSpace(strings.TrimPrefix(line, "*"))
+		exec.Command("networksetup", "-setdnsservers", name, "127.0.0.1").Run()
+	}
+	flushDNSCache()
+}
+
+// detectSystemDNS returns the first non-loopback DNS server currently configured
+// on the system, in host:port form. Returns "" if none can be determined.
+// It first tries manually configured servers; if none, falls back to DHCP-assigned
+// DNS from scutil.
+func detectSystemDNS() string {
+	out, err := exec.Command("networksetup", "-listallnetworkservices").Output()
+	if err == nil {
+		sc := bufio.NewScanner(strings.NewReader(string(out)))
+		for sc.Scan() {
+			line := sc.Text()
+			if strings.HasPrefix(line, "An asterisk") || strings.TrimSpace(line) == "" {
+				continue
+			}
+			name := strings.TrimSpace(strings.TrimPrefix(line, "*"))
+			dnsOut, err := exec.Command("networksetup", "-getdnsservers", name).Output()
+			if err != nil {
+				continue
+			}
+			for _, srv := range strings.Split(strings.TrimSpace(string(dnsOut)), "\n") {
+				srv = strings.TrimSpace(srv)
+				if net.ParseIP(srv) != nil && !strings.HasPrefix(srv, "127.") {
+					return srv + ":53"
+				}
+			}
+		}
+	}
+	// Fall back to DHCP-assigned DNS via scutil.
+	scOut, err := exec.Command("scutil", "--dns").Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(scOut), "\n") {
+		if strings.Contains(line, "nameserver[0]") {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 {
+				srv := strings.TrimSpace(parts[1])
+				if net.ParseIP(srv) != nil && !strings.HasPrefix(srv, "127.") {
+					return srv + ":53"
+				}
+			}
+		}
+	}
+	return ""
 }
 
 func (e *DNSEnforcer) Teardown() error {

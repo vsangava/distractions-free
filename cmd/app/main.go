@@ -5,6 +5,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/exec"
 	"runtime"
 	"strings"
 	"time"
@@ -135,11 +136,30 @@ func isPortConflict(err error) bool {
 func logDNSStartupError(err error) {
 	if isPortConflict(err) {
 		log.Printf("FATAL: cannot bind DNS proxy to 127.0.0.1:53 — port already in use")
+		if proc := port53HolderName(); proc != "" {
+			log.Printf("       Port 53 is held by: %s", proc)
+		}
 		log.Printf("       Find what holds it: sudo lsof -i :53 -P -n")
 		log.Printf("       See TROUBLESHOOTING.md §9 for AdGuard Home and other DNS service coexistence.")
 	} else {
 		log.Printf("FATAL: DNS server stopped unexpectedly: %v", err)
 	}
+}
+
+// port53HolderName returns the name of the process currently holding port 53,
+// or "" if it cannot be determined. Uses lsof's -F (field) output for reliable
+// parsing without depending on column widths.
+func port53HolderName() string {
+	out, err := exec.Command("lsof", "-i", ":53", "-P", "-n", "-F", "c").Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(line, "c") {
+			return strings.TrimPrefix(line, "c")
+		}
+	}
+	return ""
 }
 
 func runSetup() {
