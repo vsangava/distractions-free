@@ -95,7 +95,22 @@
         }
         .mode-badge.hosts  { background: #28a745; }
         .mode-badge.dns    { background: #007bff; }
-        .mode-badge.strict { background: #dc3545; }
+        .mode-badge.strict { background: #764ba2; }
+
+        /* Mode selector widget */
+        .mode-options { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+        .mode-option {
+            display: flex; align-items: flex-start; gap: 12px;
+            padding: 12px 14px; border: 2px solid #e9ecef; border-radius: 10px;
+            cursor: pointer; transition: border-color 0.15s, background 0.15s;
+        }
+        .mode-option:hover { border-color: #667eea; background: #f8f9ff; }
+        .mode-option.selected { border-color: #667eea; background: #f0f2ff; }
+        .mode-option input[type=radio] { margin-top: 3px; accent-color: #667eea; flex-shrink: 0; }
+        .mode-option-body { flex: 1; }
+        .mode-option-title { font-size: 14px; font-weight: 600; color: #212529; display: flex; align-items: center; gap: 6px; }
+        .mode-option-desc  { font-size: 12px; color: #6c757d; margin-top: 3px; line-height: 1.4; }
+        .mode-recommended  { font-size: 10px; font-weight: 700; color: white; background: #764ba2; padding: 2px 7px; border-radius: 10px; }
 
         .active-badge {
             display: inline-block;
@@ -573,6 +588,42 @@
         <!-- Manage content (hidden until PIN accepted) -->
         <div id="manageContent" style="display:none;">
             <div class="section">
+                <div class="section-title">Enforcement Mode</div>
+                <div class="mode-options" id="modeOptions">
+                    <label class="mode-option" id="modeOpt-strict">
+                        <input type="radio" name="enforcementMode" value="strict">
+                        <div class="mode-option-body">
+                            <div class="mode-option-title">
+                                Strict (DNS + Firewall)
+                                <span class="mode-recommended">Recommended on macOS</span>
+                            </div>
+                            <div class="mode-option-desc">DNS proxy + pf firewall anchor. Blocks at the kernel level — works even against apps that bypass the system resolver. Re-resolves IPs every minute to handle CDN rotation. macOS only.</div>
+                        </div>
+                    </label>
+                    <label class="mode-option" id="modeOpt-dns">
+                        <input type="radio" name="enforcementMode" value="dns">
+                        <div class="mode-option-body">
+                            <div class="mode-option-title">DNS Proxy</div>
+                            <div class="mode-option-desc">Local DNS proxy on 127.0.0.1:53. Wildcard subdomain blocking for any *.example.com. Apps that hard-code their own DNS resolver can bypass it.</div>
+                        </div>
+                    </label>
+                    <label class="mode-option" id="modeOpt-hosts">
+                        <input type="radio" name="enforcementMode" value="hosts">
+                        <div class="mode-option-body">
+                            <div class="mode-option-title">Standard (hosts file)</div>
+                            <div class="mode-option-desc">Edits /etc/hosts. No port binding or DNS reconfiguration required. Cross-platform. Limited to a fixed set of subdomain prefixes (www., m., mobile., app.).</div>
+                        </div>
+                    </label>
+                </div>
+                <div style="margin-top:12px;">
+                    <button onclick="saveEnforcementMode()">Apply mode</button>
+                </div>
+                <div id="modeMsg"></div>
+            </div>
+
+            <hr class="section-divider">
+
+            <div class="section">
                 <div class="section-title">Update Config</div>
                 <div class="form-group">
                     <textarea id="manageConfig"></textarea>
@@ -667,9 +718,47 @@ async function loadConfig() {
         document.getElementById('manageConfig').value = JSON.stringify(cfg, null, 2);
         validateField('testConfig',   'testConfigStatus');
         validateField('manageConfig', 'manageConfigStatus');
+        populateModeSelector(cfg);
     } catch (e) {
         liveConfig = EXAMPLE_CONFIG;
         testConfig = EXAMPLE_CONFIG;
+    }
+}
+
+function populateModeSelector(cfg) {
+    var current = (cfg && cfg.settings && cfg.settings.enforcement_mode) || 'hosts';
+    document.querySelectorAll('#modeOptions input[type=radio]').forEach(function(radio) {
+        radio.checked = (radio.value === current);
+        var opt = radio.closest('.mode-option');
+        if (opt) opt.classList.toggle('selected', radio.checked);
+    });
+    document.querySelectorAll('#modeOptions .mode-option').forEach(function(opt) {
+        opt.addEventListener('click', function() {
+            document.querySelectorAll('#modeOptions .mode-option').forEach(function(o) { o.classList.remove('selected'); });
+            opt.classList.add('selected');
+        });
+    });
+}
+
+async function saveEnforcementMode() {
+    var sel = document.querySelector('#modeOptions input[type=radio]:checked');
+    if (!sel) { showBanner('modeMsg', 'error', 'Select a mode first'); return; }
+    var newMode = sel.value;
+    var cfg = JSON.parse(JSON.stringify(liveConfig));
+    if (!cfg.settings) cfg.settings = {};
+    cfg.settings.enforcement_mode = newMode;
+    try {
+        var res = await fetch('/api/config/update', {
+            method: 'POST',
+            headers: {'X-Auth-Token': authToken, 'Content-Type': 'application/json'},
+            body: JSON.stringify(cfg)
+        });
+        var data = await res.json();
+        if (!res.ok) { showBanner('modeMsg', 'error', data.error || 'Save failed'); return; }
+        showBanner('modeMsg', 'success', 'Mode set to "' + newMode + '" — restart the service to apply');
+        await loadConfig();
+    } catch(e) {
+        showBanner('modeMsg', 'error', 'Error: ' + e.message);
     }
 }
 

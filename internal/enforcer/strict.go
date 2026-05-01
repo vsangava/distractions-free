@@ -39,7 +39,18 @@ func (e *StrictEnforcer) Activate(domains []string) error {
 	if err := e.dns.Activate(domains); err != nil {
 		return err
 	}
-	pf.ActivateBlock(domains, e.cfg.Settings.PrimaryDNS)
+	// Re-resolve ALL currently blocked domains on every activation, not just the
+	// newly added ones. CDN-backed sites rotate IPs frequently; refreshing from
+	// scratch each tick evicts stale addresses that would otherwise linger in the
+	// pf table until the block ends.
+	e.dns.mu.Lock()
+	allDomains := make([]string, 0, len(e.dns.blocked))
+	for d := range e.dns.blocked {
+		allDomains = append(allDomains, d)
+	}
+	e.dns.mu.Unlock()
+	pf.DeactivateBlock()
+	pf.ActivateBlock(allDomains, e.cfg.Settings.PrimaryDNS)
 	return nil
 }
 

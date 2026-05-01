@@ -262,31 +262,33 @@ The pause window is written to `config.json` as `pause.until` and cleared automa
 
 ## Enforcement modes
 
-The default is `"hosts"`. Most users should leave it that way.
+Three modes are available. **`strict` is recommended on macOS** — it combines DNS-proxy blocking with kernel-level firewall rules so no app can route around it.
 
-### `hosts` (default)
+### `strict` ⭐ recommended on macOS
 
-Edits `/etc/hosts` (macOS) or `C:\Windows\System32\drivers\etc\hosts` (Windows). Blocked entries live between marker lines (`# sentinel:begin` / `# sentinel:end`) and are atomically rewritten — a crash mid-write cannot corrupt the file. Other entries are never touched.
+Runs a local DNS proxy on `127.0.0.1:53` **and** installs a `pf` (Packet Filter) anchor that drops outbound packets to the resolved IPs at the kernel level. On every scheduler tick the enforcer re-resolves all blocked domains and rewrites the firewall table from scratch, so CDN IP rotation doesn't create gaps in coverage.
 
-**Best for:** most users. No port binding, no DNS reconfiguration, works in every browser and app.
+**Best for:** macOS users who want the strongest blocking. Works against apps that hard-code their own DNS resolver (some VPNs, browsers in DoH mode) because the firewall blocks the IPs directly, not just the names.
 
-**Limitation:** no wildcards — only a static prefix list (`www.`, `m.`, `mobile.`, `app.`), so very deep CDN subdomains aren't covered.
+**macOS only.** If pf setup fails (e.g. missing root), the enforcer degrades to DNS-only and logs a warning.
+
+**Requires:** pointing your OS DNS at `127.0.0.1` (see [Install](#install) advanced note).
 
 ### `dns`
 
-Runs a local DNS proxy on `127.0.0.1:53`. Blocked domains return `0.0.0.0`; everything else forwards to `primary_dns` (failover to `backup_dns`).
+Runs a local DNS proxy on `127.0.0.1:53`. Blocked domains return `0.0.0.0` (A) and `::` (AAAA); everything else forwards to `primary_dns` (failover to `backup_dns`).
 
-**Best for:** users who need wildcard subdomain blocking — any `*.example.com` subdomain is blocked if `example.com` is in the group.
+**Best for:** users who need wildcard subdomain blocking — any `*.example.com` subdomain is blocked if `example.com` is in the group — but don't need firewall-layer enforcement.
 
-**Requires:** pointing your OS DNS at `127.0.0.1` (see [Install](#install) advanced note). Apps that hard-code their own resolver (some VPNs, some browsers in DoH mode) bypass it.
+**Requires:** pointing your OS DNS at `127.0.0.1` (see [Install](#install) advanced note). Apps that hard-code their own resolver bypass it.
 
-### `strict`
+### `hosts` (default, cross-platform)
 
-Like `dns`, plus a `pf` (Packet Filter) anchor on macOS that drops outbound packets to the resolved IPs at the kernel level. Each tick the enforcer resolves blocked domains to A/AAAA addresses and rewrites the firewall table.
+Edits `/etc/hosts` (macOS) or `C:\Windows\System32\drivers\etc\hosts` (Windows). Blocked entries live between marker lines (`# sentinel:begin` / `# sentinel:end`) and are atomically rewritten — a crash mid-write cannot corrupt the file. Other entries are never touched.
 
-**Best for:** situations where DNS-level blocking isn't enough — e.g., apps that ignore the system resolver entirely.
+**Best for:** Windows users, or macOS users who prefer the simplest setup with no port binding or DNS reconfiguration.
 
-**macOS only.** CDN-heavy sites rotate IPs, so only the resolved subset is blocked. If pf setup fails, the enforcer degrades to DNS-only and logs a warning.
+**Limitation:** no wildcards — only a static prefix list (`www.`, `m.`, `mobile.`, `app.`), so very deep CDN subdomains aren't covered.
 
 ### Switching modes
 
