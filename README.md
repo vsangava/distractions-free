@@ -229,6 +229,7 @@ The default config ships with three groups. `games` and `videos` are blocked dur
 
 - **`settings.enforcement_mode`** — `"hosts"` (default), `"dns"`, or `"strict"`. See [Enforcement modes](#enforcement-modes).
 - **`settings.primary_dns` / `backup_dns`** — upstream resolvers used in `dns`/`strict` mode. Ignored in `hosts` mode.
+- **`settings.dns_failure_mode`** — `"open"` (default) or `"closed"`. Controls what happens if Sentinel stops unexpectedly while in `dns`/`strict` mode. `"open"`: the OS DNS is set to `127.0.0.1 <backup_dns_host>`, so if Sentinel crashes the machine falls through to `backup_dns` and stays online (blocking lapses until launchd restarts the service). `"closed"`: only `127.0.0.1` is set — DNS fails entirely while Sentinel is down, making a crash unbypassable. Requires `backup_dns` to be a non-loopback IP on port 53; if it isn't, `"open"` silently behaves like `"closed"` and logs a warning. Ignored in `hosts` mode.
 - **`settings.auth_token`** — auto-generated on first launch. The web UI sends this in `X-Auth-Token` for every mutating API call.
 - **`groups`** — named lists of domains that rules are bound to. In `hosts` mode, common prefixes (`www.`, `m.`, `mobile.`, `app.`) are blocked automatically. In `dns` mode, subdomain matching is suffix-based (`a.b.example.com` is blocked if `example.com` is in the group).
 - **`rules[].group`** — must match a key in `groups`.

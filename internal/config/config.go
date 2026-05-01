@@ -34,6 +34,7 @@ type Settings struct {
 	BackupDNS       string `json:"backup_dns"`
 	AuthToken       string `json:"auth_token"`
 	EnforcementMode string `json:"enforcement_mode,omitempty"`
+	DNSFailureMode  string `json:"dns_failure_mode,omitempty"`
 }
 
 // GetEnforcementMode returns the validated enforcement mode, defaulting to "hosts"
@@ -45,6 +46,20 @@ func (s Settings) GetEnforcementMode() string {
 		return s.EnforcementMode
 	default:
 		return "hosts"
+	}
+}
+
+// GetDNSFailureMode returns the validated DNS failure mode, defaulting to "open"
+// when the field is absent or unrecognised. "open" means the OS DNS config
+// includes backup_dns as a system-level fallback so the machine stays online if
+// Sentinel crashes; "closed" means only 127.0.0.1 is set and DNS fails entirely
+// if Sentinel is not running.
+func (s Settings) GetDNSFailureMode() string {
+	switch s.DNSFailureMode {
+	case "open", "closed":
+		return s.DNSFailureMode
+	default:
+		return "open"
 	}
 }
 

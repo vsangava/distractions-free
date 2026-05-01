@@ -416,6 +416,27 @@ sudo sentinel restart
 
 Sentinel now owns port 53 (blocking distracting sites by returning `0.0.0.0`) and forwards all other queries to AdGuard Home, which continues its own ad/tracker filtering.
 
+#### What happens if Sentinel crashes or is killed?
+
+In `dns`/`strict` mode the OS sends all DNS through Sentinel. If it stops unexpectedly, behaviour depends on `dns_failure_mode` in `config.json`:
+
+| `dns_failure_mode` | Sentinel down | Sentinel restarted by launchd |
+|--------------------|--------------|-------------------------------|
+| `"open"` (default) | Machine falls back to `backup_dns` — internet works, blocking lapses | Sentinel takes over again within seconds |
+| `"closed"` | DNS resolution fails entirely — no internet until Sentinel is back | Same |
+
+**`"open"`** is the default. It requires `backup_dns` to be a non-loopback IP on port 53 (e.g. `1.1.1.1:53`). If you have pointed `backup_dns` at a local resolver on a non-standard port (e.g. `127.0.0.1:5300` for AdGuard), Sentinel cannot use it as an OS-level fallback and will log a warning; it will operate fail-closed in that case regardless of the setting.
+
+**`"closed"`** is appropriate when you need the blocking to be unbypassable — a crash means no internet rather than unfiltered internet. Be aware that a motivated user could potentially trigger a crash to temporarily lift blocks.
+
+To change the setting:
+
+```bash
+sudo nano /Library/Application\ Support/Sentinel/config.json
+# set "dns_failure_mode": "closed"
+sudo sentinel restart
+```
+
 ### `service is already installed`
 
 ```bash

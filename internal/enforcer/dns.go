@@ -36,14 +36,28 @@ func (e *DNSEnforcer) Setup() error {
 
 // configureSystemDNS detects the current upstream DNS before taking over port 53,
 // saves it as primary_dns if the config is still at factory default, then points
-// every active network interface at the local DNS proxy (127.0.0.1).
+// every active network interface at the local DNS proxy. When dns_failure_mode is
+// "open" (the default), backup_dns is included as a second OS-level server so the
+// machine stays online if Sentinel crashes; "closed" sets only 127.0.0.1.
 func (e *DNSEnforcer) configureSystemDNS() {
 	if upstream := detectSystemDNS(); upstream != "" {
 		config.AutoSetPrimaryDNS(upstream)
 	}
+
+	cfg := config.GetConfig()
+	servers := []string{"127.0.0.1"}
+	if cfg.Settings.GetDNSFailureMode() == "open" {
+		if fallback := backupDNSHost(cfg.Settings.BackupDNS); fallback != "" {
+			servers = append(servers, fallback)
+		} else {
+			log.Printf("dns: dns_failure_mode is \"open\" but backup_dns (%s) cannot be used as OS-level fallback (must be a non-loopback IP on port 53); operating fail-closed", cfg.Settings.BackupDNS)
+		}
+	}
+
 	out, err := exec.Command("networksetup", "-listallnetworkservices").Output()
 	if err != nil {
-		exec.Command("networksetup", "-setdnsservers", "Wi-Fi", "127.0.0.1").Run()
+		args := append([]string{"-setdnsservers", "Wi-Fi"}, servers...)
+		exec.Command("networksetup", args...).Run()
 		flushDNSCache()
 		return
 	}
@@ -54,9 +68,27 @@ func (e *DNSEnforcer) configureSystemDNS() {
 			continue
 		}
 		name := strings.TrimSpace(strings.TrimPrefix(line, "*"))
-		exec.Command("networksetup", "-setdnsservers", name, "127.0.0.1").Run()
+		args := append([]string{"-setdnsservers", name}, servers...)
+		exec.Command("networksetup", args...).Run()
 	}
 	flushDNSCache()
+}
+
+// backupDNSHost extracts a usable OS-level fallback host from a host:port DNS
+// address. Returns "" if the address is on a non-standard port (the OS always
+// queries port 53), if the host is loopback, or if parsing fails.
+func backupDNSHost(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return ""
+	}
+	if port != "53" {
+		return ""
+	}
+	if net.ParseIP(host) == nil || strings.HasPrefix(host, "127.") {
+		return ""
+	}
+	return host
 }
 
 // detectSystemDNS returns the first non-loopback DNS server currently configured
