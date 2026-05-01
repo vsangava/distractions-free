@@ -58,7 +58,7 @@ func (e *DNSEnforcer) Teardown() error {
 		exec.Command("killall", "-HUP", "mDNSResponder").Run()
 	case "windows":
 		exec.Command("powershell", "-Command",
-			"Set-DnsClientServerAddress -InterfaceAlias 'Wi-Fi' -ResetServerAddresses").Run()
+			`Get-DnsClientServerAddress | Where-Object { $_.ServerAddresses -contains "127.0.0.1" } | ForEach-Object { Set-DnsClientServerAddress -InterfaceIndex $_.InterfaceIndex -ResetServerAddresses }`).Run()
 	}
 	return nil
 }
