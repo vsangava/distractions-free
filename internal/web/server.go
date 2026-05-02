@@ -181,7 +181,7 @@ func StatusHandler(w http.ResponseWriter, r *http.Request) {
 	blocked, lastEval := scheduler.GetStatus()
 	if lastEval.IsZero() {
 		cfg := resolveConfig(r)
-		blocked = scheduler.EvaluateRulesAtTime(time.Now(), cfg)
+		blocked = scheduler.EvaluateRulesAtTime(time.Now(), cfg, nil)
 		lastEval = time.Now()
 	}
 	cfg := config.GetConfig()
@@ -439,7 +439,7 @@ func HostsPreviewHandler(w http.ResponseWriter, r *http.Request) {
 	cfg := resolveConfig(r)
 	mode := cfg.Settings.GetEnforcementMode()
 
-	blocked := scheduler.EvaluateRulesAtTime(time.Now(), cfg)
+	blocked := scheduler.EvaluateRulesAtTime(time.Now(), cfg, nil)
 
 	var domains []string
 	for d := range blocked {
@@ -467,7 +467,7 @@ func PFPreviewHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	blocked := scheduler.EvaluateRulesAtTime(time.Now(), cfg)
+	blocked := scheduler.EvaluateRulesAtTime(time.Now(), cfg, nil)
 	var domains []string
 	for d := range blocked {
 		domains = append(domains, d)
