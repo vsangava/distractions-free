@@ -263,4 +263,21 @@ Development history for this project, captured from Claude Code sessions. Ordere
 
 ---
 
+## May 1 — Session 16: Event History Log & Dashboard Tab
+**Session ID:** `current` · **PR:** #69
+
+**Opening prompt:**
+> "commit changes raise and merge pr."
+
+**What happened:**
+- Reviewed all pending changes across `internal/scheduler/`, `internal/web/`, and `internal/web/static/index.html`.
+- Identified that `events.jsonl` and platform-specific binaries (`sentinel-macos-amd64`, `sentinel-macos-arm64`) were untracked and should be gitignored — updated `.gitignore` with `sentinel-*` and `events.jsonl` patterns.
+- Split changes into two focused commits: (1) the event history feature (eventlog.go, scheduler integration, `/api/events` endpoint, History tab); (2) docs (CLAUDE.md session log convention + initial session-log.md).
+- Raised PR #69 with full description of every changed file, the rationale for JSONL format, atomic prune, and retention window. Gotchas section called out `--local` mode behaviour and prune reset-on-restart.
+- Merged and cleaned up the branch.
+
+**Wrap-up:** Block/unblock event history log shipped — persists 30 days of transitions, pruned daily, surfaced in the web dashboard History tab behind the existing auth middleware.
+
+---
+
 *Generated from Claude Code session history on 2026-05-01.*
