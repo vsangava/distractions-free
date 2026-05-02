@@ -320,3 +320,54 @@ Development history for this project, captured from Claude Code sessions. Ordere
 ---
 
 *Generated from Claude Code session history on 2026-05-01.*
+
+---
+
+## May 2 — Session 20: Strict Mode pf Firewall — End-to-End Fixes
+**Session ID:** `45e8b2f6` · **PR:** #76 (fix/strict-mode-pf)
+
+**Opening prompt:**
+> "debugging help needed. DNS mode domains are not blocked... nslookup discord.com shows getting recursion not available from 127.0.0.1, trying next server..."
+
+**What happened:**
+
+This session started with a DNS-mode bug and expanded into a multi-turn deep dive on why strict mode pf blocking wasn't working end-to-end. What looked like a single problem turned out to be five independent bugs stacked on top of each other, each masking the next.
+
+**Bug 1 — DNS proxy not setting the RA bit (root cause of initial report)**
+
+`nslookup` was saying `Got recursion not available from 127.0.0.1, trying next server` and falling through to the backup DNS, so blocked sites were still resolving. The `GetDNSResponse` function in `internal/proxy/dns.go` was building reply messages without setting `m.RecursionAvailable = true`. Any stub resolver that checks the RA bit treats RA=0 as "server doesn't recurse" and queries the next configured server. Fix: one line. This was shipped in a separate PR (#75, v0.1.12) immediately.
+
+**Bug 2 — AppleScript log noise**
+
+While reviewing logs to diagnose strict mode, the user noticed `MacOSScriptExecutor.LogScript` was logging the full AppleScript text every scheduler tick (every 60 seconds), and `ExecuteScript` was logging "application isn't running" (-600) errors every minute because Safari wasn't open. Both are expected conditions that should be silent. Fixed: `LogScript` changed to no-op, `-600` errors suppressed in `ExecuteScript`.
+
+**Bug 3 — `atomicWrite` using read-only root as temp directory**
+
+Logs showed: `pf: update pf.conf: open /.pf-tmp-3309907590: read-only file system`. The `atomicWrite` helper in `internal/pf/pf.go` had `dir := "/"` hardcoded as the temp file location. macOS uses a sealed read-only root volume; temp files cannot be created there. Fix: changed to `dir := filepath.Dir(path)` so the temp file lives in the same directory as the target file (`/etc/`), which is writable.
+
+**Bug 4 — `0.0.0.0` / `::` poisoning the pf table**
+
+After fixing atomicWrite, pf activated but logs showed `pf: no IPs resolved for domains`. On closer inspection, the anchor file was being written with `0.0.0.0` and `::` — Sentinel's own blocked-domain responses. `ResolveDomainIPs` was querying `primaryDNS`, which is `127.0.0.1:53` (Sentinel's proxy). When a domain is actively blocked, the proxy returns `0.0.0.0`/`::`. The old code added those addresses to the pf table, then filtered them as a separate step; the `net.LookupHost` fallback also went through the system resolver (still pointing at `127.0.0.1`), producing the same poisoned response. Fix: filter unspecified addresses (`rr.A.IsUnspecified()`, `rr.AAAA.IsUnspecified()`) directly in `ResolveDomainIPs`, remove the `net.LookupHost` fallback entirely, and add a `backupDNS string` parameter to `ActivateBlock` so strict mode can re-resolve using `1.1.1.1` or the configured backup DNS when primary returns nothing.
+
+**Bug 5 — IPv6 `primary_dns` with malformed host:port**
+
+After adding the `backupDNS` fallback, logs showed `pf: no IPs resolved` again. Checking the config, `primary_dns` was `2001:558:feed::1:53` — an ISP-assigned IPv6 DNS server. Go's `net.Dial` requires IPv6 addresses to be bracketed: `[2001:558:feed::1]:53`. The unbracketed form parses ambiguously (the last `:53` could be part of the IPv6 address). `detectSystemDNS()` in `internal/enforcer/dns.go` was formatting all detected DNS addresses as `ip + ":53"`, which produces a malformed address for IPv6. Fix: added a `hostPort(host, port string) string` helper that wraps IPv6 in brackets, used for all DNS address formatting in that file.
+
+**Bug 6 — pf anchor syntax error (table declarations not allowed in anchor files)**
+
+After real IPs were finally being resolved, the anchor file was still failing to load: `/etc/pf.anchors/sentinel:1: syntax error`. The original `GenerateAnchorContent` used `table <blocked_ips> persist { ... }` syntax, which modern macOS pfctl accepts in `/etc/pf.conf` but rejects in anchor files loaded via `pfctl -a anchor -f file`. The workaround: inline the IPs directly in the block rules, split by address family (inet / inet6). macOS pfctl then automatically promotes the inline lists to internal `__automatic_*` tables. Fix: rewrote `GenerateAnchorContent` to produce `block drop out quick inet proto {tcp udp} from any to { ip1 ip2 }` and `block drop out quick inet6 proto {tcp udp} from any to { ip6_1 ip6_2 }`. Also rewrote `DeactivateBlock` — the old implementation flushed a named table that no longer exists; new version writes `# no IPs to block` to the anchor file and reloads the anchor.
+
+**Bug 7 — CDN IP rotation: IPs go stale between Activate calls**
+
+After all six bugs were fixed, `discord.com` was blocked correctly but `facebook.com` was not, even though `nslookup facebook.com` returned `0.0.0.0`. Investigation: `pfctl -a sentinel -t __automatic_*_0 -T show` showed the IPs from when the block was activated; `dig facebook.com @1.1.1.1` returned a different IP (`57.144.22.1`) not in the table. Facebook serves from a large CDN and rotates IPs constantly. The comment in `StrictEnforcer.Activate` said "re-resolve ALL currently blocked domains on every activation", but `Activate` is only called by the scheduler when the *set of blocked domains changes* — during a steady-state block window, `Activate` is never called again, so IPs go stale indefinitely. Fix: added a `Refresh()` method to the `Enforcer` interface. `StrictEnforcer.Refresh()` re-resolves all currently blocked domains and reloads the pf anchor. `DNSEnforcer.Refresh()` and `HostsEnforcer.Refresh()` are no-ops. The scheduler calls `activeEnforcer.Refresh()` every tick when blocks are active and no domains changed.
+
+**Verification methodology documented**
+
+Added a comprehensive strict mode diagnostics section to `TROUBLESHOOTING.md`, including:
+- The correct `pfctl` command sequence to verify each layer (pf enabled → anchor registered → rules loaded → IPs in `__automatic_*` tables)
+- How to correlate the current real IP of a CDN site with what's in the tables
+- Explanation of why `pfctl -a sentinel -t blocked_ips -T show` (the old command) no longer works
+- The chicken-and-egg issue with `primaryDNS` pointing at the proxy and why `backupDNS` is required
+- Known limitations: ≤60 s CDN gap, pre-existing connections, IPv6 must be covered
+
+**Wrap-up:** Six root-cause bugs in strict mode pf blocking fixed across `internal/pf/pf.go`, `internal/enforcer/` (all three backends), and `internal/scheduler/scheduler.go`. Strict mode now correctly resolves, loads, and periodically refreshes IP-level firewall rules. Testing confirmed discord.com blocked; facebook CDN rotation fix in place but requires further testing to confirm. Raised as PR #76.

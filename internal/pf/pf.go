@@ -7,9 +7,9 @@ import (
 	"bytes"
 	"fmt"
 	"log"
-	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -63,39 +63,47 @@ func ResolveDomainIPs(domain, dnsServer string) []string {
 		for _, ans := range r.Answer {
 			switch rr := ans.(type) {
 			case *dns.A:
-				add(rr.A.String())
+				// Skip 0.0.0.0 — Sentinel's own blocked-domain response.
+				if !rr.A.IsUnspecified() {
+					add(rr.A.String())
+				}
 			case *dns.AAAA:
-				add(rr.AAAA.String())
+				// Skip :: — Sentinel's own blocked-domain response.
+				if !rr.AAAA.IsUnspecified() {
+					add(rr.AAAA.String())
+				}
 			}
 		}
 	}
 
-	if len(ips) == 0 {
-		addrs, err := net.LookupHost(domain)
-		if err == nil {
-			for _, a := range addrs {
-				add(a)
-			}
-		}
-	}
 
 	return ips
 }
 
 // GenerateAnchorContent builds the pfctl anchor rules for the given IP list.
 // Pure function — no I/O, safe to call without root.
+// IPs are inlined directly into block rules (one rule per address family) rather than
+// using a table declaration, because macOS pfctl rejects table declarations in
+// anchor files loaded via "pfctl -a anchor -f file".
 func GenerateAnchorContent(ips []string) string {
 	if len(ips) == 0 {
 		return "# no IPs to block\n"
 	}
-
-	var sb strings.Builder
-	sb.WriteString("table <blocked_ips> persist {\n")
+	var v4, v6 []string
 	for _, ip := range ips {
-		sb.WriteString("  " + ip + "\n")
+		if strings.Contains(ip, ":") {
+			v6 = append(v6, ip)
+		} else {
+			v4 = append(v4, ip)
+		}
 	}
-	sb.WriteString("}\n")
-	sb.WriteString("block drop out quick proto {tcp udp} from any to <blocked_ips>\n")
+	var sb strings.Builder
+	if len(v4) > 0 {
+		sb.WriteString("block drop out quick inet proto {tcp udp} from any to { " + strings.Join(v4, " ") + " }\n")
+	}
+	if len(v6) > 0 {
+		sb.WriteString("block drop out quick inet6 proto {tcp udp} from any to { " + strings.Join(v6, " ") + " }\n")
+	}
 	return sb.String()
 }
 
@@ -185,7 +193,9 @@ func RemoveAnchor() {
 }
 
 // ActivateBlock resolves IPs for the given domains, writes the anchor file, and loads it into pf.
-func ActivateBlock(domains []string, primaryDNS string) {
+// backupDNS is tried per-domain when primaryDNS returns no usable IPs (e.g. when primaryDNS is
+// the local proxy and the domain is already DNS-blocked).
+func ActivateBlock(domains []string, primaryDNS, backupDNS string) {
 	if runtime.GOOS != "darwin" || len(domains) == 0 {
 		return
 	}
@@ -196,6 +206,9 @@ func ActivateBlock(domains []string, primaryDNS string) {
 
 	for _, d := range domains {
 		ips := ResolveDomainIPs(d, primaryDNS)
+		if len(ips) == 0 && backupDNS != "" && backupDNS != primaryDNS {
+			ips = ResolveDomainIPs(d, backupDNS)
+		}
 		resolved[d] = ips
 		for _, ip := range ips {
 			if !seen[ip] {
@@ -217,9 +230,14 @@ func ActivateBlock(domains []string, primaryDNS string) {
 	}
 
 	// Load the anchor into the running pf.
+	// macOS pfctl exits 1 for "Use of -f option" and ALTQ warnings even on success;
+	// only treat it as a real failure when the output contains an actual error.
 	if out, err := exec.Command("pfctl", "-a", anchorName, "-f", anchorFile).CombinedOutput(); err != nil {
-		log.Printf("pf: load anchor: %v: %s", err, strings.TrimSpace(string(out)))
-		return
+		msg := strings.TrimSpace(string(out))
+		if strings.Contains(msg, "syntax error") || strings.Contains(msg, "rules not loaded") {
+			log.Printf("pf: load anchor: %v: %s", err, msg)
+			return
+		}
 	}
 
 	// Kill existing outbound states to those IPs so cached connections are severed.
@@ -230,18 +248,21 @@ func ActivateBlock(domains []string, primaryDNS string) {
 	log.Printf("pf: activated block for %d domains (%d IPs)", len(domains), len(allIPs))
 }
 
-// DeactivateBlock flushes all IPs from the pf block table.
+// DeactivateBlock clears the sentinel anchor by loading an empty rule set.
 func DeactivateBlock() {
 	if runtime.GOOS != "darwin" {
 		return
 	}
 
-	out, err := exec.Command("pfctl", "-a", anchorName, "-t", "blocked_ips", "-T", "flush").CombinedOutput()
-	if err != nil {
-		// Table may not exist yet — that's fine on first run.
+	empty := []byte("# no IPs to block\n")
+	if err := os.WriteFile(anchorFile, empty, 0644); err != nil {
+		log.Printf("pf: clear anchor file: %v", err)
+		return
+	}
+	if out, err := exec.Command("pfctl", "-a", anchorName, "-f", anchorFile).CombinedOutput(); err != nil {
 		msg := strings.TrimSpace(string(out))
-		if !strings.Contains(msg, "No such table") && !strings.Contains(msg, "No ALTQ support") {
-			log.Printf("pf: flush table: %v: %s", err, msg)
+		if strings.Contains(msg, "syntax error") || strings.Contains(msg, "rules not loaded") {
+			log.Printf("pf: deactivate reload: %v: %s", err, msg)
 		}
 	}
 }
@@ -308,7 +329,7 @@ func stripPFConf() error {
 
 // atomicWrite writes data to path via a temp file + rename.
 func atomicWrite(path string, data []byte, perm os.FileMode) error {
-	dir := "/"
+	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".pf-tmp-*")
 	if err != nil {
 		return err

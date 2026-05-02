@@ -60,6 +60,8 @@ func (e *HostsEnforcer) Setup() error {
 	return nil
 }
 
+func (e *HostsEnforcer) Refresh() {}
+
 func (e *HostsEnforcer) Teardown() error {
 	return e.DeactivateAll()
 }

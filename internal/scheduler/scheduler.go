@@ -43,15 +43,16 @@ type MacOSScriptExecutor struct{}
 
 func (e *MacOSScriptExecutor) ExecuteScript(script string) error {
 	if err := runAsMacUser(script); err != nil {
-		log.Printf("AppleScript execution failed: %v", err)
+		// "Application isn't running" (-600) is expected when Safari/Chrome isn't open — not worth logging.
+		if !strings.Contains(err.Error(), "isn't running") && !strings.Contains(err.Error(), "(-600)") {
+			log.Printf("AppleScript execution failed: %v", err)
+		}
 		return err
 	}
 	return nil
 }
 
-func (e *MacOSScriptExecutor) LogScript(script string) {
-	log.Printf("AppleScript generated:\n%s", script)
-}
+func (e *MacOSScriptExecutor) LogScript(script string) {}
 
 // TestScriptExecutor logs scripts instead of executing them
 type TestScriptExecutor struct {
@@ -443,6 +444,12 @@ func evaluateRules() {
 			if err := activeEnforcer.Deactivate(newlyUnblocked); err != nil {
 				log.Printf("scheduler: deactivate failed: %v", err)
 			}
+		}
+		// Refresh pf IPs every tick even when the domain set is unchanged.
+		// CDN-backed sites rotate IPs between Activate calls; Refresh re-resolves
+		// them so the firewall rules stay current. No-op for dns/hosts mode.
+		if len(newlyBlocked) == 0 && len(activeBlocks) > 0 {
+			activeEnforcer.Refresh()
 		}
 	}
 

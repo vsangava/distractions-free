@@ -17,12 +17,15 @@ import (
 // Enforcer is implemented by every blocking backend.
 // Setup/Teardown are called once at service start/stop.
 // Activate/Deactivate are called with domain-level diffs each scheduler tick.
+// Refresh is called every tick when blocks are active; strict mode uses it to
+// re-resolve CDN IPs that rotate between Activate calls.
 type Enforcer interface {
 	Setup() error
 	Teardown() error
 	Activate(domains []string) error
 	Deactivate(domains []string) error
 	DeactivateAll() error
+	Refresh()
 }
 
 // New returns the Enforcer matching the config's enforcement_mode.

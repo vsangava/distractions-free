@@ -17,16 +17,19 @@ func TestGenerateAnchorContent_withIPs(t *testing.T) {
 	ips := []string{"1.2.3.4", "5.6.7.8", "2001:db8::1"}
 	got := GenerateAnchorContent(ips)
 
-	if !strings.Contains(got, "table <blocked_ips>") {
-		t.Error("missing table declaration")
-	}
 	for _, ip := range ips {
 		if !strings.Contains(got, ip) {
 			t.Errorf("missing IP %s in anchor content", ip)
 		}
 	}
-	if !strings.Contains(got, "block drop out quick proto {tcp udp}") {
-		t.Error("missing block rule")
+	if !strings.Contains(got, "block drop out quick inet proto {tcp udp}") {
+		t.Error("missing inet block rule")
+	}
+	if !strings.Contains(got, "block drop out quick inet6 proto {tcp udp}") {
+		t.Error("missing inet6 block rule")
+	}
+	if strings.Contains(got, "table") {
+		t.Error("anchor content must not use table declarations (unsupported on macOS)")
 	}
 }
 

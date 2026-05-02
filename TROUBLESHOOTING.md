@@ -56,6 +56,7 @@ ipconfig /flushdns
 | Symptom | Likely cause | Where to look |
 |---|---|---|
 | Blocked sites still load | Wrong mode for your setup, or current time isn't in a block window | [§4 Mode-specific diagnostics](#4-mode-specific-diagnostics) |
+| Site blocked in DNS but loads in browser (strict mode) | CDN rotated to an IP not yet in pf rules, or pre-existing connection | [§4 strict mode — diagnosing "pf active but site still loads"](#diagnosing-pf-active-but-site-still-loads) |
 | All DNS broken (nothing resolves) | DNS-mode service stopped without restoring system DNS | [§1](#1-if-your-internet-is-broken--read-this-first) |
 | Service won't start: `permission denied` or `address already in use` on port 53 | Missing sudo, or another DNS service (AdGuard Home, dnsmasq…) holds port 53 | [§9 Port 53 errors](#port-53-errors-permission-denied--address-already-in-use) |
 | Service installed but `start` does nothing | Service framework is silent about startup failures — check logs | [§5 Reading logs](#5-reading-logs) |
@@ -167,31 +168,137 @@ See [§6 Restarting after a binary update](#restarting-after-a-binary-update) fo
 
 ### `strict` mode
 
-Strict mode = DNS mode + pf. Verify both layers:
+Strict mode adds a pf (packet filter) firewall layer on top of DNS blocking. DNS alone can be bypassed by apps that have cached a real IP; pf drops packets to those IPs at the kernel level regardless. Both layers must be working for strict mode to be effective.
+
+#### Layer 1: Verify DNS is blocking (same as `dns` mode)
 
 ```bash
-# pf enabled?
-sudo pfctl -s info | head -3
-# → Status: Enabled
+# Is the proxy returning 0.0.0.0 for blocked domains?
+dig @127.0.0.1 facebook.com +short
+# → 0.0.0.0 means DNS layer is working
 
-# Our anchor loaded?
-sudo pfctl -s Anchors
-# → sentinel should appear
-
-# What IPs are currently blocked at the firewall?
-sudo pfctl -a sentinel -t blocked_ips -T show
-
-# Preview what strict mode would produce for current blocks (no root needed)
-TOKEN=$(curl -s http://localhost:8040/api/config | jq -r '.settings.auth_token')
-curl -s -H "X-Auth-Token: $TOKEN" http://localhost:8040/api/pf-preview | jq
+# Is the OS actually using our proxy?
+networksetup -getdnsservers Wi-Fi
+# → should include 127.0.0.1
 ```
 
-If `Setup` failed (logs show `pf anchor setup failed`), the strict enforcer is degraded to DNS-only. That's intentional — better to keep blocking at the DNS layer than crash the daemon. Look in the daemon logs for the specific pfctl error.
+#### Layer 2: Verify pf is active and loaded
 
-If pf is loaded but the site still loads:
+```bash
+# Is pf enabled?
+sudo pfctl -s info | head -3
+# → "Status: Enabled" — if "Disabled", pf never started (see below)
 
-- The CDN may have rotated to a fresh IP not in your table. The next scheduler tick (within 60 s) re-resolves and reloads.
-- Existing TCP connections survive an anchor reload by default — the daemon does run `pfctl -k` to kill matching states, but a connection that was opened *before* the IP made it onto the table is unaffected. Close the browser and retry.
+# Is our anchor registered?
+sudo pfctl -s Anchors
+# → "sentinel" should appear in the list
+
+# What rules are active in our anchor?
+sudo pfctl -a sentinel -s rules
+# → Should show lines like:
+#   block drop out quick inet proto tcp from any to <__automatic_xxxxxxxx_0>
+#   block drop out quick inet proto udp from any to <__automatic_xxxxxxxx_1>
+#   block drop out quick inet6 proto tcp from any to <__automatic_xxxxxxxx_2>
+#   block drop out quick inet6 proto udp from any to <__automatic_xxxxxxxx_3>
+# macOS automatically promotes inline IP lists to internal tables (__automatic_*).
+# "No rules" means either no domains are currently blocked, or anchor loading failed.
+
+# What IPs are in the active tables?
+# (Replace the hash with what you see in "pfctl -a sentinel -s rules" above)
+sudo pfctl -a sentinel -t __automatic_<hash>_0 -T show
+# → Lists all blocked IPv4 addresses
+
+sudo pfctl -a sentinel -t __automatic_<hash>_2 -T show
+# → Lists all blocked IPv6 addresses
+```
+
+#### Checking if a specific IP is being blocked
+
+```bash
+# Resolve the current real IP for a domain (bypassing Sentinel's proxy):
+dig facebook.com @1.1.1.1 +short
+dig facebook.com @1.1.1.1 AAAA +short
+
+# Then check if that IP is in the active pf table:
+sudo pfctl -a sentinel -t __automatic_<hash>_0 -T show | grep <ip>
+# → If the IP appears: pf should be blocking it. Try:
+curl -v --max-time 5 https://facebook.com
+# → Should hang/timeout with connection dropped
+
+# → If the IP does NOT appear: pf doesn't know about this IP yet.
+# The Refresh() loop re-resolves every tick (≤60s). Wait one minute and recheck.
+# If it still doesn't appear, check the logs:
+log show --predicate 'process == "sentinel"' --last 5m | grep pf
+```
+
+#### Diagnosing "pf active but site still loads"
+
+**Step 1 — Is the IP in the table?**
+
+If the IP the browser is connecting to is not in the table, pf won't block it. CDN-backed sites (Facebook, Twitter, Instagram) rotate through dozens of IPs. The daemon re-resolves every minute via `Refresh()`, but there is a ≤60 s window where a fresh IP isn't blocked yet.
+
+```bash
+# See what IP an active connection is actually using:
+sudo pfctl -s states | grep 443 | grep <domain-ip-range>
+```
+
+**Step 2 — Check the anchor file on disk**
+
+```bash
+cat /etc/pf.anchors/sentinel
+# Should look like:
+#   block drop out quick inet proto {tcp udp} from any to { 1.2.3.4 5.6.7.8 }
+#   block drop out quick inet6 proto {tcp udp} from any to { 2001:db8::1 }
+# If it says "# no IPs to block", either no domains are scheduled or IP resolution failed.
+```
+
+**Step 3 — Check that pf.conf has our anchor**
+
+```bash
+grep -A3 "sentinel" /etc/pf.conf
+# Should show:
+#   # sentinel:begin
+#   anchor "sentinel"
+#   load anchor "sentinel" from "/etc/pf.anchors/sentinel"
+#   # sentinel:end
+# If absent, the anchor was never injected — check setup logs.
+```
+
+**Step 4 — Verify IP resolution is working**
+
+Strict mode resolves IPs using `backup_dns` as a fallback when `primary_dns` (usually `127.0.0.1:53`, Sentinel's own proxy) returns `0.0.0.0` for blocked domains. If `backup_dns` is unset or wrong, no IPs will be resolved.
+
+```bash
+# What does the config say?
+curl -s http://localhost:8040/api/config | jq '.settings | {primary_dns, backup_dns}'
+
+# Manually resolve using backup_dns to see what IPs you expect:
+dig facebook.com @1.1.1.1 +short      # replace 1.1.1.1 with your backup_dns host
+dig facebook.com @1.1.1.1 AAAA +short
+
+# Check log for IP resolution issues:
+log show --predicate 'process == "sentinel"' --last 5m | grep "pf:"
+# "pf: no IPs resolved" → backup_dns is failing or unreachable
+# "pf: load anchor: ... syntax error" → anchor file has malformed rules
+```
+
+**Step 5 — Re-activate manually to force a reload**
+
+If you need to force an immediate pf refresh without waiting for the next tick, restart the service:
+
+```bash
+sudo ./sentinel stop && sudo ./sentinel start
+# Then wait ~5s for the first tick, and verify:
+sudo pfctl -a sentinel -s rules
+```
+
+#### Known pf limitations
+
+- **CDN IP rotation**: Sites like Facebook serve from large IP pools and rotate constantly. There is always a ≤60 s window between a new IP appearing and Sentinel blocking it. Closing and reopening the browser tab forces a fresh connection through the updated rules.
+- **Pre-existing connections**: `pfctl -k` is run to kill existing states when a block activates, but connections opened before Sentinel started aren't guaranteed to be killed. Restart the browser if a site that should be blocked remains reachable.
+- **IPv6 must be covered**: Browsers will prefer IPv6 if available. If only IPv4 IPs are in the anchor, a site reachable via IPv6 will bypass the block. Sentinel resolves both A and AAAA records — verify both tables are populated.
+
+If `Setup` failed (logs show `pf anchor setup failed`), the strict enforcer degrades to DNS-only. That's intentional — better to keep blocking at the DNS layer than crash the daemon. Look in the daemon logs for the specific pfctl error, then run `sudo ./sentinel clean --yes && sudo ./sentinel install && sudo ./sentinel start` to reset.
 
 ### macOS AppleScript path
 

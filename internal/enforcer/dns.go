@@ -26,6 +26,8 @@ func NewDNSEnforcer(cfg config.Config) *DNSEnforcer {
 	return &DNSEnforcer{cfg: cfg, blocked: make(map[string]bool)}
 }
 
+func (e *DNSEnforcer) Refresh() {}
+
 func (e *DNSEnforcer) Setup() error {
 	proxy.UpdateBlockedDomains(make(map[string]bool))
 	if runtime.GOOS == "darwin" {
@@ -112,7 +114,7 @@ func detectSystemDNS() string {
 			for _, srv := range strings.Split(strings.TrimSpace(string(dnsOut)), "\n") {
 				srv = strings.TrimSpace(srv)
 				if net.ParseIP(srv) != nil && !strings.HasPrefix(srv, "127.") {
-					return srv + ":53"
+					return hostPort(srv, "53")
 				}
 			}
 		}
@@ -128,12 +130,21 @@ func detectSystemDNS() string {
 			if len(parts) == 2 {
 				srv := strings.TrimSpace(parts[1])
 				if net.ParseIP(srv) != nil && !strings.HasPrefix(srv, "127.") {
-					return srv + ":53"
+					return hostPort(srv, "53")
 				}
 			}
 		}
 	}
 	return ""
+}
+
+// hostPort formats a host+port string, wrapping IPv6 addresses in brackets
+// so the result is valid for net.Dial ("host:port" or "[ipv6]:port").
+func hostPort(host, port string) string {
+	if strings.Contains(host, ":") {
+		return "[" + host + "]:" + port
+	}
+	return host + ":" + port
 }
 
 func (e *DNSEnforcer) Teardown() error {

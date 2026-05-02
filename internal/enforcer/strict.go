@@ -50,7 +50,7 @@ func (e *StrictEnforcer) Activate(domains []string) error {
 	}
 	e.dns.mu.Unlock()
 	pf.DeactivateBlock()
-	pf.ActivateBlock(allDomains, e.cfg.Settings.PrimaryDNS)
+	pf.ActivateBlock(allDomains, e.cfg.Settings.PrimaryDNS, e.cfg.Settings.BackupDNS)
 	return nil
 }
 
@@ -67,7 +67,7 @@ func (e *StrictEnforcer) Deactivate(domains []string) error {
 	}
 	e.dns.mu.Unlock()
 	if len(remaining) > 0 {
-		pf.ActivateBlock(remaining, e.cfg.Settings.PrimaryDNS)
+		pf.ActivateBlock(remaining, e.cfg.Settings.PrimaryDNS, e.cfg.Settings.BackupDNS)
 	}
 	return nil
 }
@@ -76,4 +76,22 @@ func (e *StrictEnforcer) DeactivateAll() error {
 	e.dns.DeactivateAll()
 	pf.DeactivateBlock()
 	return nil
+}
+
+// Refresh re-resolves all currently blocked domains and reloads the pf anchor.
+// Called every scheduler tick so CDN IP rotations are picked up without waiting
+// for a domain set change to trigger Activate.
+func (e *StrictEnforcer) Refresh() {
+	e.dns.mu.Lock()
+	domains := make([]string, 0, len(e.dns.blocked))
+	for d := range e.dns.blocked {
+		domains = append(domains, d)
+	}
+	e.dns.mu.Unlock()
+
+	if len(domains) == 0 {
+		return
+	}
+	pf.DeactivateBlock()
+	pf.ActivateBlock(domains, e.cfg.Settings.PrimaryDNS, e.cfg.Settings.BackupDNS)
 }
