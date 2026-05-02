@@ -4,6 +4,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/miekg/dns"
 	"github.com/vsangava/sentinel/internal/config"
@@ -11,6 +12,7 @@ import (
 
 var (
 	blockedDomains map[string]bool
+	groupLookup    map[string]string // domain → group, all configured domains
 	blockMu        sync.RWMutex
 	dnsServer      *dns.Server
 )
@@ -19,6 +21,14 @@ func UpdateBlockedDomains(newBlocked map[string]bool) {
 	blockMu.Lock()
 	defer blockMu.Unlock()
 	blockedDomains = newBlocked
+}
+
+// UpdateGroupLookup replaces the domain→group lookup used for usage tracking.
+// Built each scheduler tick from config; covers all domains regardless of block state.
+func UpdateGroupLookup(lookup map[string]string) {
+	blockMu.Lock()
+	defer blockMu.Unlock()
+	groupLookup = lookup
 }
 
 // IsDomainBlocked reports whether domain matches any entry in blocked, including subdomains.
@@ -78,9 +88,19 @@ func GetDNSResponse(r *dns.Msg, blockedDomainsList map[string]bool, primaryDNS, 
 func handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 	blockMu.RLock()
 	blockedCopy := blockedDomains
+	glCopy := groupLookup
 	blockMu.RUnlock()
 
 	cfg := config.GetConfig()
+
+	// Log usage for non-blocked queries that belong to a configured group.
+	// Only runs in dns/strict mode (where the proxy sees real queries).
+	if len(r.Question) > 0 {
+		domain := strings.TrimSuffix(r.Question[0].Name, ".")
+		if group, ok := glCopy[domain]; ok && !IsDomainBlocked(domain, blockedCopy) {
+			_ = AppendUsageEvent(UsageEvent{TS: time.Now(), Domain: domain, Group: group})
+		}
+	}
 
 	m, err := GetDNSResponse(r, blockedCopy, cfg.Settings.PrimaryDNS, cfg.Settings.BackupDNS)
 	if err != nil {
