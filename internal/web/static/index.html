@@ -249,6 +249,54 @@
         .event-badge.unblocked { background: #f0fff4; color: #28a745; }
         .history-domains { font-family: monospace; font-size: 12px; color: #495057; }
 
+        /* Quota bars */
+        .quota-bar-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        .quota-bar-label { font-size: 13px; font-weight: 600; color: #343a40; width: 110px; flex-shrink: 0; }
+        .quota-bar-track {
+            flex: 1;
+            height: 8px;
+            background: #e9ecef;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .quota-bar-fill {
+            height: 100%;
+            border-radius: 4px;
+            background: linear-gradient(90deg, #28a745, #34ce57);
+            transition: width 0.4s;
+        }
+        .quota-bar-fill.warn  { background: linear-gradient(90deg, #fd7e14, #fca130); }
+        .quota-bar-fill.over  { background: linear-gradient(90deg, #dc3545, #e63946); }
+        .quota-bar-meta { font-size: 12px; color: #6c757d; width: 90px; text-align: right; flex-shrink: 0; }
+        .quota-mode-warn {
+            font-size: 12px; color: #856404; background: #fff8e1;
+            border: 1px solid #ffe082; border-radius: 6px;
+            padding: 6px 10px; margin-bottom: 10px;
+        }
+
+        /* Usage tab table */
+        .usage-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .usage-table th {
+            text-align: left; padding: 7px 12px;
+            font-size: 11px; font-weight: 700; text-transform: uppercase;
+            letter-spacing: 0.5px; color: #adb5bd; border-bottom: 1px solid #e9ecef;
+        }
+        .usage-table td { padding: 9px 12px; border-bottom: 1px solid #f1f3f5; }
+        .usage-table tr:last-child td { border-bottom: none; }
+        .usage-mins { font-family: monospace; font-weight: 600; color: #343a40; }
+        .usage-range-row { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; }
+        .usage-range-btn {
+            background: none; border: 1.5px solid #dee2e6; color: #495057;
+            padding: 4px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;
+        }
+        .usage-range-btn.active { background: #f0f2ff; border-color: #667eea; color: #667eea; }
+        .usage-range-btn:hover { border-color: #667eea; opacity: 1; }
+
         /* Buttons */
         button {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -549,6 +597,7 @@
         <button class="tab-button" onclick="switchTab('test')">Test</button>
         <button class="tab-button" onclick="switchTab('manage')">Manage <span class="lock-badge" id="manageLockBadge">🔒</span></button>
         <button class="tab-button" onclick="switchTab('history')">History</button>
+        <button class="tab-button" onclick="switchTab('usage')">Usage</button>
     </div>
 
     <!-- STATUS TAB -->
@@ -576,6 +625,11 @@
         <div class="section">
             <div class="section-title">Active Rules</div>
             <div id="rulesContent"><p style="color:#adb5bd;font-size:13px;">Loading…</p></div>
+        </div>
+
+        <div class="section" id="quotaSection" style="display:none;">
+            <div class="section-title">Daily Quotas</div>
+            <div id="quotaContent"></div>
         </div>
     </div>
 
@@ -755,6 +809,29 @@
             <div id="historyContent"><p style="color:#adb5bd;font-size:13px;">Loading…</p></div>
         </div>
     </div>
+
+    <!-- USAGE TAB -->
+    <div id="usageTab" class="tab-content">
+        <div class="section">
+            <div class="section-header">
+                <div class="section-title">DNS Usage</div>
+                <button class="btn-sm btn-success" onclick="loadUsage()">↻ Refresh</button>
+            </div>
+            <p style="font-size:12px;color:#6c757d;margin-bottom:14px;">
+                Measures time groups were actively used, based on DNS query patterns.
+                Requires <strong>dns</strong> or <strong>strict</strong> enforcement mode.
+                Background tabs for SPAs (Reddit, YouTube) may count toward usage.
+            </p>
+            <div class="usage-range-row" id="usageRangeRow">
+                <span style="font-size:12px;font-weight:600;color:#6c757d;">Range:</span>
+                <button class="usage-range-btn active" onclick="setUsageRange('today', this)">Today</button>
+                <button class="usage-range-btn" onclick="setUsageRange('7d', this)">7 days</button>
+                <button class="usage-range-btn" onclick="setUsageRange('30d', this)">30 days</button>
+                <button class="usage-range-btn" onclick="setUsageRange('60d', this)">60 days</button>
+            </div>
+            <div id="usageContent"><p style="color:#adb5bd;font-size:13px;">Loading…</p></div>
+        </div>
+    </div>
 </div>
 <script>
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -860,18 +937,19 @@ async function saveEnforcementMode() {
 
 // ── Tab switching ─────────────────────────────────────────────────────────────
 function switchTab(tab) {
-    ['status','test','manage','history'].forEach(function(t) {
+    ['status','test','manage','history','usage'].forEach(function(t) {
         document.getElementById(t + 'Tab').classList.remove('active');
     });
     document.querySelectorAll('.tab-button').forEach(function(b) {
         b.classList.remove('active');
     });
     document.getElementById(tab + 'Tab').classList.add('active');
-    var idx = {status: 0, test: 1, manage: 2, history: 3}[tab];
+    var idx = {status: 0, test: 1, manage: 2, history: 3, usage: 4}[tab];
     document.querySelectorAll('.tab-button')[idx].classList.add('active');
 
     if (tab === 'status') { loadStatus(); }
     if (tab === 'history') { loadHistory(); }
+    if (tab === 'usage') { loadUsage(); }
     if (tab === 'manage' && !manageUnlocked) {
         setTimeout(function() {
             var first = document.querySelectorAll('.pin-box')[0];
@@ -1057,6 +1135,9 @@ async function loadStatus() {
             document.getElementById('statusMeta').textContent =
                 'Last evaluated: ' + (isNaN(d2) ? data.last_evaluated : d2.toLocaleString());
         }
+
+        // Quota bars
+        renderQuotas(data.quotas || [], data.enforcement_mode || 'hosts');
 
         // Reload config and refresh derived views
         await loadConfig();
@@ -1572,6 +1653,101 @@ async function stopPomodoro() {
         await loadStatus();
     } catch(e) {
         alert('Error: ' + e.message);
+    }
+}
+
+// ── Quota bars (Status tab) ───────────────────────────────────────────────────
+function renderQuotas(quotas, mode) {
+    var section = document.getElementById('quotaSection');
+    var el      = document.getElementById('quotaContent');
+    if (!quotas || quotas.length === 0) {
+        section.style.display = 'none';
+        return;
+    }
+    section.style.display = '';
+
+    var modeWarn = (mode === 'hosts')
+        ? '<div class="quota-mode-warn">⚠ Quota tracking requires <strong>dns</strong> or <strong>strict</strong> mode. Usage data is not collected in hosts mode.</div>'
+        : '';
+
+    var bars = quotas.map(function(q) {
+        var pct = Math.min(100, Math.round(q.used_minutes / q.quota_minutes * 100));
+        var cls = pct >= 100 ? 'over' : pct >= 80 ? 'warn' : '';
+        var label = q.quota_exceeded
+            ? q.group + ' <span style="font-size:11px;color:#dc3545;font-weight:700">BLOCKED</span>'
+            : q.group;
+        return '<div class="quota-bar-row">' +
+            '<div class="quota-bar-label">' + label + '</div>' +
+            '<div class="quota-bar-track"><div class="quota-bar-fill ' + cls + '" style="width:' + pct + '%"></div></div>' +
+            '<div class="quota-bar-meta">' + q.used_minutes + ' / ' + q.quota_minutes + ' min</div>' +
+            '</div>';
+    }).join('');
+
+    el.innerHTML = modeWarn + bars;
+}
+
+// ── Usage tab ─────────────────────────────────────────────────────────────────
+var currentUsageRange = 'today';
+
+function setUsageRange(range, btn) {
+    currentUsageRange = range;
+    document.querySelectorAll('.usage-range-btn').forEach(function(b) { b.classList.remove('active'); });
+    if (btn) btn.classList.add('active');
+    loadUsage();
+}
+
+async function loadUsage() {
+    var el = document.getElementById('usageContent');
+    el.innerHTML = '<p style="color:#adb5bd;font-size:13px;">Loading…</p>';
+    try {
+        var res = await fetch('/api/usage?range=' + currentUsageRange, {
+            headers: {'X-Auth-Token': authToken}
+        });
+        var data = await res.json();
+        if (!res.ok) {
+            el.innerHTML = '<p style="color:#dc3545;font-size:13px;">Error: ' + (data.error || 'failed') + '</p>';
+            return;
+        }
+
+        var groups  = (data.groups  || []).sort(function(a,b){ return b.used_minutes - a.used_minutes; });
+        var domains = (data.domains || []).sort(function(a,b){ return b.used_minutes - a.used_minutes; });
+
+        var html = '';
+
+        if (groups.length === 0 && domains.length === 0) {
+            html = '<p style="color:#adb5bd;font-size:13px;">No usage data for this range. ' +
+                'Usage tracking requires dns or strict enforcement mode.</p>';
+        } else {
+            if (groups.length > 0) {
+                html += '<div class="section-title" style="margin-bottom:8px;">Groups</div>';
+                var gRows = groups.map(function(g) {
+                    var quotaCell = g.quota_minutes
+                        ? '<td class="usage-mins">' + g.quota_minutes + '</td>'
+                        : '<td style="color:#adb5bd">—</td>';
+                    return '<tr><td style="font-weight:600">' + escapeHtml(g.group) + '</td>' +
+                        '<td class="usage-mins">' + g.used_minutes + '</td>' + quotaCell + '</tr>';
+                }).join('');
+                html += '<table class="usage-table" style="margin-bottom:20px;">' +
+                    '<thead><tr><th>Group</th><th>Used (min)</th><th>Quota (min)</th></tr></thead>' +
+                    '<tbody>' + gRows + '</tbody></table>';
+            }
+
+            if (domains.length > 0) {
+                html += '<div class="section-title" style="margin-bottom:8px;">Domains</div>';
+                var dRows = domains.map(function(d) {
+                    return '<tr><td style="font-family:monospace">' + escapeHtml(d.domain) + '</td>' +
+                        '<td style="color:#6c757d">' + escapeHtml(d.group || '—') + '</td>' +
+                        '<td class="usage-mins">' + d.used_minutes + '</td></tr>';
+                }).join('');
+                html += '<table class="usage-table">' +
+                    '<thead><tr><th>Domain</th><th>Group</th><th>Used (min)</th></tr></thead>' +
+                    '<tbody>' + dRows + '</tbody></table>';
+            }
+        }
+
+        el.innerHTML = html;
+    } catch(e) {
+        el.innerHTML = '<p style="color:#dc3545;font-size:13px;">Error: ' + e.message + '</p>';
     }
 }
 
