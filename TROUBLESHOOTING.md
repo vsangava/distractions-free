@@ -57,6 +57,7 @@ ipconfig /flushdns
 |---|---|---|
 | Blocked sites still load | Wrong mode for your setup, or current time isn't in a block window | [§4 Mode-specific diagnostics](#4-mode-specific-diagnostics) |
 | Site blocked in DNS but loads in browser (strict mode) | CDN rotated to an IP not yet in pf rules, or pre-existing connection | [§4 strict mode — diagnosing "pf active but site still loads"](#diagnosing-pf-active-but-site-still-loads) |
+| Blocked sites load in Chrome/Firefox despite `nslookup` returning `0.0.0.0` | Browser is using DNS-over-HTTPS (DoH), bypassing the system resolver | [§4 Browser DNS-over-HTTPS bypass](#browser-dns-over-https-doh-bypass) |
 | All DNS broken (nothing resolves) | DNS-mode service stopped without restoring system DNS | [§1](#1-if-your-internet-is-broken--read-this-first) |
 | Service won't start: `permission denied` or `address already in use` on port 53 | Missing sudo, or another DNS service (AdGuard Home, dnsmasq…) holds port 53 | [§9 Port 53 errors](#port-53-errors-permission-denied--address-already-in-use) |
 | Service installed but `start` does nothing | Service framework is silent about startup failures — check logs | [§5 Reading logs](#5-reading-logs) |
@@ -120,7 +121,6 @@ If the block isn't there during a scheduled window, the scheduler hasn't fired (
 If the block *is* there but the site loads anyway:
 
 - Your browser or app may have cached the DNS resolution. Try a private window, or restart the app.
-- The browser may be using DNS-over-HTTPS (DoH) or DNS-over-TLS (DoT), which bypasses `/etc/hosts`. **Disable DoH** in the browser, or switch to `dns`/`strict` mode (which also won't help against DoH unless you can intercept the upstream — `pf` in strict mode does, since it blocks the resolved IPs at the kernel).
 - The site may be served from a CDN domain not covered by the static prefix list (`""`, `www.`, `m.`, `mobile.`, `app.`). Add the relevant subdomain to the relevant group in `config.json`.
 
 To preview what *would* be written without root:
@@ -299,6 +299,69 @@ sudo pfctl -a sentinel -s rules
 - **IPv6 must be covered**: Browsers will prefer IPv6 if available. If only IPv4 IPs are in the anchor, a site reachable via IPv6 will bypass the block. Sentinel resolves both A and AAAA records — verify both tables are populated.
 
 If `Setup` failed (logs show `pf anchor setup failed`), the strict enforcer degrades to DNS-only. That's intentional — better to keep blocking at the DNS layer than crash the daemon. Look in the daemon logs for the specific pfctl error, then run `sudo ./sentinel clean --yes && sudo ./sentinel install && sudo ./sentinel start` to reset.
+
+### Browser DNS-over-HTTPS (DoH) bypass
+
+When a browser has a **specific DoH provider manually configured**, it sends queries directly to that provider over HTTPS on port 443, bypassing the system resolver at `127.0.0.1:53`. This makes `dns` mode blocks invisible to the browser even when `nslookup` or `dig` correctly return `0.0.0.0`.
+
+**This does not affect default browser installs.** Chrome's automatic mode only upgrades to DoH when the system DNS is a known provider (8.8.8.8, 1.1.1.1, etc.). Since Sentinel sets system DNS to `127.0.0.1`, Chrome automatic mode stays on regular DNS and goes through the proxy normally. The problem only occurs when a user has explicitly chosen "With Google" or "With Cloudflare" in `chrome://settings/security`, or equivalent in Firefox.
+
+**How each mode handles it:**
+
+| Mode | How it blocks | DoH bypasses it? |
+|---|---|---|
+| `hosts` | Writes `0.0.0.0 <domain>` to `/etc/hosts` — checked by the OS before any DNS | **No** — `getaddrinfo` reads `/etc/hosts` first, even when DoH is active |
+| `dns` | Intercepts at port 53 | **Yes** — browser skips port 53 entirely |
+| `strict` | Port 53 + pf firewall blocks the resolved IPs at the kernel | **No** — pf drops the TCP connection regardless of how the IP was obtained |
+
+**Verify that DoH is bypassing your block:**
+
+```bash
+# 1. Confirm the system resolver sees the block (goes through Sentinel's proxy)
+nslookup discord.com
+# → Should return 0.0.0.0
+
+# 2. Simulate what Chrome does — query DoH directly, bypassing 127.0.0.1:53
+curl -s "https://dns.google/resolve?name=discord.com&type=A" \
+  | jq '.Answer[] | select(.type==1) | .data'
+# → Returns a real IP (e.g. 162.159.128.233) — this is what Chrome uses
+```
+
+If step 1 returns `0.0.0.0` but step 2 returns a real IP, the block is being bypassed via DoH.
+
+**Fix options:**
+
+**Option A — Disable Secure DNS in the browser (per-browser)**
+
+- Chrome: `chrome://settings/security` → "Use secure DNS" → off
+- Firefox: Settings → General → "DNS over HTTPS" → off
+- Edge: `edge://settings/privacy` → "Use secure DNS" → off
+
+**Option B — Switch to `strict` mode (recommended)**
+
+Strict mode resolves the real IPs of blocked domains and installs them in a pf table. Even if DoH gives the browser a live IP, pf drops the connection at the kernel before any packets leave the machine.
+
+```bash
+# Verify strict mode is blocking at the IP layer:
+
+# Step 1: get the real IP via DoH (same path as Chrome)
+IP=$(curl -s "https://dns.google/resolve?name=discord.com&type=A" \
+  | jq -r '.Answer[] | select(.type==1) | .data' | head -1)
+echo "Real IP: $IP"
+
+# Step 2: confirm that IP is in Sentinel's pf table
+sudo pfctl -a sentinel -t blocked_ips -T show | grep "$IP"
+# → If it appears, pf is blocking it
+
+# Step 3: try to actually connect (simulates Chrome making the request)
+curl -v --connect-to "discord.com:443:$IP:443" https://discord.com --max-time 5
+# → dns mode:    succeeds — site loads
+# → strict mode: connection times out — pf dropped it
+```
+
+**Option C — Block the DoH provider domains (fragile)**
+
+Add `dns.google`, `cloudflare-dns.com`, `doh.opendns.com` to your blocked groups so Sentinel returns `0.0.0.0` for the DoH endpoints themselves, forcing the browser to fall back to the system resolver. This is brittle — browsers have many fallback DoH providers and will silently switch between them.
 
 ### macOS AppleScript path
 
@@ -646,3 +709,32 @@ See [§4 macOS AppleScript path](#macos-applescript-path). The most common cause
 ### `clean` says "could not create service handle"
 
 Usually means the binary you're running was built for a different OS. Check `file ./sentinel` and rebuild for the current platform with `make build`.
+
+---
+
+### Quota configured but not enforcing
+
+**Symptom:** `daily_quota_minutes` is set on a rule, the Usage tab shows time being consumed, but the group is never blocked when the quota is reached.
+
+**Cause:** quota enforcement requires `dns` or `strict` enforcement mode. In `hosts` mode, DNS queries go through the OS resolver directly — Sentinel's proxy never sees them, so usage cannot be tracked.
+
+**Fix:** switch to `dns` or `strict` mode in the Manage tab or via the API:
+
+```bash
+TOKEN=$(curl -s http://localhost:8040/api/config | jq -r '.settings.auth_token')
+curl -X POST http://localhost:8040/api/config/update \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "$(curl -s http://localhost:8040/api/config | jq '.settings.enforcement_mode = "strict"')"
+```
+
+The Status tab shows a warning badge on the quota section when the current mode is `hosts`.
+
+---
+
+### Usage tab shows zero data / Usage not accumulating
+
+1. Check enforcement mode — `hosts` mode never populates `usage.jsonl`.
+2. Check that the daemon is running: `sudo ./sentinel status` (macOS) or check services.
+3. Check that the domains you expect to see are configured in a `groups` entry. Only domains in a configured group are tracked.
+4. The Usage tab shows DNS queries, not page views. If the site uses a long-lived connection (e.g. WebSocket) after the initial load, subsequent minutes may not generate new DNS lookups and usage will appear lower than expected.

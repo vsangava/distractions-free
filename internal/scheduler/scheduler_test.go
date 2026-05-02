@@ -30,7 +30,7 @@ func TestEvaluateRulesAtTime_NoActiveRules(t *testing.T) {
 	}
 
 	testTime := time.Date(2024, time.April, 1, 10, 30, 0, 0, time.UTC)
-	result := EvaluateRulesAtTime(testTime, cfg)
+	result := EvaluateRulesAtTime(testTime, cfg, nil)
 
 	if len(result) != 0 {
 		t.Errorf("expected empty blocked domains, got %v", result)
@@ -44,7 +44,7 @@ func TestEvaluateRulesAtTime_InactiveRule(t *testing.T) {
 
 	// Monday 10:30 (should be blocked if rule was active)
 	testTime := time.Date(2024, time.April, 1, 10, 30, 0, 0, time.UTC)
-	result := EvaluateRulesAtTime(testTime, cfg)
+	result := EvaluateRulesAtTime(testTime, cfg, nil)
 
 	if len(result) != 0 {
 		t.Errorf("expected inactive rule to not block, got %v", result)
@@ -58,7 +58,7 @@ func TestEvaluateRulesAtTime_DomainBlockedDuringSchedule(t *testing.T) {
 
 	// Monday 10:30 (within block time)
 	testTime := time.Date(2024, time.April, 1, 10, 30, 0, 0, time.UTC)
-	result := EvaluateRulesAtTime(testTime, cfg)
+	result := EvaluateRulesAtTime(testTime, cfg, nil)
 
 	if !result["youtube.com"] {
 		t.Errorf("expected youtube.com to be blocked at 10:30 on Monday, got %v", result)
@@ -72,7 +72,7 @@ func TestEvaluateRulesAtTime_DomainNotBlockedOutsideSchedule(t *testing.T) {
 
 	// Monday 18:30 (after block time)
 	testTime := time.Date(2024, time.April, 1, 18, 30, 0, 0, time.UTC)
-	result := EvaluateRulesAtTime(testTime, cfg)
+	result := EvaluateRulesAtTime(testTime, cfg, nil)
 
 	if result["youtube.com"] {
 		t.Errorf("expected youtube.com to NOT be blocked at 18:30, got %v", result)
@@ -86,7 +86,7 @@ func TestEvaluateRulesAtTime_DomainNotBlockedWrongDay(t *testing.T) {
 
 	// Tuesday 10:30 (different day, no schedule)
 	testTime := time.Date(2024, time.April, 2, 10, 30, 0, 0, time.UTC)
-	result := EvaluateRulesAtTime(testTime, cfg)
+	result := EvaluateRulesAtTime(testTime, cfg, nil)
 
 	if result["youtube.com"] {
 		t.Errorf("expected youtube.com to NOT be blocked on Tuesday, got %v", result)
@@ -100,7 +100,7 @@ func TestEvaluateRulesAtTime_BlockedAtExactStartTime(t *testing.T) {
 
 	// Wednesday 14:00 (exact start time)
 	testTime := time.Date(2024, time.April, 3, 14, 0, 0, 0, time.UTC)
-	result := EvaluateRulesAtTime(testTime, cfg)
+	result := EvaluateRulesAtTime(testTime, cfg, nil)
 
 	if !result["reddit.com"] {
 		t.Errorf("expected reddit.com to be blocked at exact start time, got %v", result)
@@ -114,7 +114,7 @@ func TestEvaluateRulesAtTime_NotBlockedAtExactEndTime(t *testing.T) {
 
 	// Friday 17:00 (exact end time, should NOT be blocked)
 	testTime := time.Date(2024, time.April, 5, 17, 0, 0, 0, time.UTC)
-	result := EvaluateRulesAtTime(testTime, cfg)
+	result := EvaluateRulesAtTime(testTime, cfg, nil)
 
 	if result["twitter.com"] {
 		t.Errorf("expected twitter.com to NOT be blocked at exact end time, got %v", result)
@@ -155,7 +155,7 @@ func TestEvaluateRulesAtTime_MultipleDomainsMultipleSchedules(t *testing.T) {
 
 	// Monday 10:30
 	testTime := time.Date(2024, time.April, 1, 10, 30, 0, 0, time.UTC)
-	result := EvaluateRulesAtTime(testTime, cfg)
+	result := EvaluateRulesAtTime(testTime, cfg, nil)
 
 	if !result["youtube.com"] {
 		t.Errorf("expected youtube.com to be blocked")
@@ -178,21 +178,21 @@ func TestEvaluateRulesAtTime_MultipleTimeSlotsPerDay(t *testing.T) {
 
 	// Monday 10:30 (first slot)
 	testTime1 := time.Date(2024, time.April, 1, 10, 30, 0, 0, time.UTC)
-	result1 := EvaluateRulesAtTime(testTime1, cfg)
+	result1 := EvaluateRulesAtTime(testTime1, cfg, nil)
 	if !result1["youtube.com"] {
 		t.Errorf("expected youtube.com to be blocked in first slot")
 	}
 
 	// Monday 13:00 (between slots)
 	testTime2 := time.Date(2024, time.April, 1, 13, 0, 0, 0, time.UTC)
-	result2 := EvaluateRulesAtTime(testTime2, cfg)
+	result2 := EvaluateRulesAtTime(testTime2, cfg, nil)
 	if result2["youtube.com"] {
 		t.Errorf("expected youtube.com to NOT be blocked between slots")
 	}
 
 	// Monday 15:00 (second slot)
 	testTime3 := time.Date(2024, time.April, 1, 15, 0, 0, 0, time.UTC)
-	result3 := EvaluateRulesAtTime(testTime3, cfg)
+	result3 := EvaluateRulesAtTime(testTime3, cfg, nil)
 	if !result3["youtube.com"] {
 		t.Errorf("expected youtube.com to be blocked in second slot")
 	}
@@ -215,7 +215,7 @@ func TestEvaluateRulesAtTime_GroupExpandsToAllDomains(t *testing.T) {
 	}
 
 	testTime := time.Date(2024, time.April, 1, 10, 0, 0, 0, time.UTC)
-	result := EvaluateRulesAtTime(testTime, cfg)
+	result := EvaluateRulesAtTime(testTime, cfg, nil)
 
 	for _, d := range []string{"roblox.com", "fortnite.com", "minecraft.net"} {
 		if !result[d] {
@@ -242,7 +242,7 @@ func TestEvaluateRulesAtTime_RuleWithMissingGroupIsSkipped(t *testing.T) {
 	}
 
 	testTime := time.Date(2024, time.April, 1, 10, 30, 0, 0, time.UTC)
-	result := EvaluateRulesAtTime(testTime, cfg)
+	result := EvaluateRulesAtTime(testTime, cfg, nil)
 
 	if len(result) != 0 {
 		t.Errorf("expected rule with missing group to be skipped, got %v", result)
@@ -442,7 +442,7 @@ func TestEvaluateRulesAtTime_AllWeekdaySchedules(t *testing.T) {
 		})
 
 		testTime := time.Date(2024, time.April, wd.dayOfWeek, 10, 0, 0, 0, time.UTC)
-		result := EvaluateRulesAtTime(testTime, cfg)
+		result := EvaluateRulesAtTime(testTime, cfg, nil)
 
 		if !result["youtube.com"] {
 			t.Errorf("expected youtube.com to be blocked on %s at 10:00", wd.day)
@@ -457,7 +457,7 @@ func TestEvaluateRulesAtTime_EdgeCaseMinuteBefore(t *testing.T) {
 
 	// Monday 09:59 (1 minute before start)
 	testTime := time.Date(2024, time.April, 1, 9, 59, 0, 0, time.UTC)
-	result := EvaluateRulesAtTime(testTime, cfg)
+	result := EvaluateRulesAtTime(testTime, cfg, nil)
 
 	if result["youtube.com"] {
 		t.Errorf("expected youtube.com to NOT be blocked at 09:59, got %v", result)
@@ -471,7 +471,7 @@ func TestEvaluateRulesAtTime_EdgeCaseMinuteAfterEnd(t *testing.T) {
 
 	// Friday 15:01 (1 minute after end)
 	testTime := time.Date(2024, time.April, 5, 15, 1, 0, 0, time.UTC)
-	result := EvaluateRulesAtTime(testTime, cfg)
+	result := EvaluateRulesAtTime(testTime, cfg, nil)
 
 	if result["reddit.com"] {
 		t.Errorf("expected reddit.com to NOT be blocked at 15:01, got %v", result)
@@ -486,7 +486,7 @@ func TestEvaluateRulesAtTime_OvernightSlot_EveningBlocked(t *testing.T) {
 	})
 
 	testTime := time.Date(2024, time.April, 1, 22, 0, 0, 0, time.UTC)
-	result := EvaluateRulesAtTime(testTime, cfg)
+	result := EvaluateRulesAtTime(testTime, cfg, nil)
 
 	if !result["example.com"] {
 		t.Errorf("expected example.com blocked at 22:00 Monday (evening side of overnight slot)")
@@ -499,7 +499,7 @@ func TestEvaluateRulesAtTime_OvernightSlot_MorningBlocked(t *testing.T) {
 	})
 
 	testTime := time.Date(2024, time.April, 2, 7, 0, 0, 0, time.UTC)
-	result := EvaluateRulesAtTime(testTime, cfg)
+	result := EvaluateRulesAtTime(testTime, cfg, nil)
 
 	if !result["example.com"] {
 		t.Errorf("expected example.com blocked at 07:00 Tuesday (morning side of Monday overnight slot)")
@@ -512,7 +512,7 @@ func TestEvaluateRulesAtTime_OvernightSlot_ExactStart_Blocked(t *testing.T) {
 	})
 
 	testTime := time.Date(2024, time.April, 1, 21, 30, 0, 0, time.UTC)
-	result := EvaluateRulesAtTime(testTime, cfg)
+	result := EvaluateRulesAtTime(testTime, cfg, nil)
 
 	if !result["example.com"] {
 		t.Errorf("expected example.com blocked at exact start 21:30 Monday")
@@ -525,7 +525,7 @@ func TestEvaluateRulesAtTime_OvernightSlot_JustBeforeEnd_Blocked(t *testing.T) {
 	})
 
 	testTime := time.Date(2024, time.April, 2, 7, 59, 0, 0, time.UTC)
-	result := EvaluateRulesAtTime(testTime, cfg)
+	result := EvaluateRulesAtTime(testTime, cfg, nil)
 
 	if !result["example.com"] {
 		t.Errorf("expected example.com blocked at 07:59 Tuesday (one minute before overnight End)")
@@ -538,7 +538,7 @@ func TestEvaluateRulesAtTime_OvernightSlot_ExactEnd_NotBlocked(t *testing.T) {
 	})
 
 	testTime := time.Date(2024, time.April, 2, 8, 0, 0, 0, time.UTC)
-	result := EvaluateRulesAtTime(testTime, cfg)
+	result := EvaluateRulesAtTime(testTime, cfg, nil)
 
 	if result["example.com"] {
 		t.Errorf("expected example.com NOT blocked at exact end 08:00 Tuesday")
@@ -551,7 +551,7 @@ func TestEvaluateRulesAtTime_OvernightSlot_AfterEnd_NotBlocked(t *testing.T) {
 	})
 
 	testTime := time.Date(2024, time.April, 2, 8, 1, 0, 0, time.UTC)
-	result := EvaluateRulesAtTime(testTime, cfg)
+	result := EvaluateRulesAtTime(testTime, cfg, nil)
 
 	if result["example.com"] {
 		t.Errorf("expected example.com NOT blocked at 08:01 Tuesday (after overnight End)")
@@ -564,7 +564,7 @@ func TestEvaluateRulesAtTime_OvernightSlot_BeforeStart_NotBlocked(t *testing.T) 
 	})
 
 	testTime := time.Date(2024, time.April, 1, 21, 29, 0, 0, time.UTC)
-	result := EvaluateRulesAtTime(testTime, cfg)
+	result := EvaluateRulesAtTime(testTime, cfg, nil)
 
 	if result["example.com"] {
 		t.Errorf("expected example.com NOT blocked at 21:29 Monday (one minute before overnight Start)")
@@ -578,14 +578,14 @@ func TestEvaluateRulesAtTime_OvernightSlot_SundayToMonday(t *testing.T) {
 
 	// Monday 06:30 — morning continuation of Sunday's overnight slot
 	testTime := time.Date(2024, time.April, 1, 6, 30, 0, 0, time.UTC)
-	result := EvaluateRulesAtTime(testTime, cfg)
+	result := EvaluateRulesAtTime(testTime, cfg, nil)
 	if !result["example.com"] {
 		t.Errorf("expected example.com blocked at 06:30 Monday (morning side of Sunday→Monday overnight slot)")
 	}
 
 	// Monday 07:00 — exact End, must not be blocked
 	testTimeEnd := time.Date(2024, time.April, 1, 7, 0, 0, 0, time.UTC)
-	resultEnd := EvaluateRulesAtTime(testTimeEnd, cfg)
+	resultEnd := EvaluateRulesAtTime(testTimeEnd, cfg, nil)
 	if resultEnd["example.com"] {
 		t.Errorf("expected example.com NOT blocked at exact end 07:00 Monday (Sunday→Monday slot)")
 	}
@@ -599,7 +599,7 @@ func TestEvaluateRulesAtTime_OvernightSlot_MorningNotBlockedWithoutYesterdaySche
 
 	// Tuesday 07:00 — yesterday's slot is same-day and must not trigger the overnight path
 	testTime := time.Date(2024, time.April, 2, 7, 0, 0, 0, time.UTC)
-	result := EvaluateRulesAtTime(testTime, cfg)
+	result := EvaluateRulesAtTime(testTime, cfg, nil)
 
 	if result["example.com"] {
 		t.Errorf("expected example.com NOT blocked at 07:00 Tuesday when Monday only has a daytime slot")
@@ -628,7 +628,7 @@ func TestEvaluateRulesAtTime_OvernightSlot_CoexistsWithSameDaySlot(t *testing.T)
 
 	for _, c := range cases {
 		testTime := time.Date(2024, time.April, c.day, c.hour, c.min, 0, 0, time.UTC)
-		result := EvaluateRulesAtTime(testTime, cfg)
+		result := EvaluateRulesAtTime(testTime, cfg, nil)
 		if c.blocked && !result["example.com"] {
 			t.Errorf("expected example.com BLOCKED at %s", c.label)
 		}
@@ -706,7 +706,7 @@ func TestEvaluateRulesAtTime_PomodoroWorkPhase_BlocksAllActiveRules(t *testing.T
 	}
 
 	// Time is outside all schedule slots — should still be blocked during work phase
-	result := EvaluateRulesAtTime(testTime, cfg)
+	result := EvaluateRulesAtTime(testTime, cfg, nil)
 
 	if !result["active.com"] {
 		t.Error("expected active.com to be blocked during Pomodoro work phase")
@@ -725,7 +725,7 @@ func TestEvaluateRulesAtTime_PomodoroBreakPhase_UsesSchedule(t *testing.T) {
 	}
 
 	// Monday noon — outside the 02:00–03:00 schedule window
-	result := EvaluateRulesAtTime(testTime, cfg)
+	result := EvaluateRulesAtTime(testTime, cfg, nil)
 
 	if result["active.com"] {
 		t.Error("expected active.com NOT blocked during break phase (out of schedule)")
@@ -741,7 +741,7 @@ func TestEvaluateRulesAtTime_PomodoroWorkExpired_FallsThrough(t *testing.T) {
 		PhaseEndsAt: testTime.Add(-1 * time.Second), // expired before testTime
 	}
 
-	result := EvaluateRulesAtTime(testTime, cfg)
+	result := EvaluateRulesAtTime(testTime, cfg, nil)
 
 	if result["active.com"] {
 		t.Error("expected active.com NOT blocked after work phase expires (out of schedule)")

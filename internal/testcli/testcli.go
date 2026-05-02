@@ -85,7 +85,7 @@ func GetQueryResultWithConfig(timeStr, domain string, cfg config.Config) QueryRe
 	result.Domain = domain
 
 	// Evaluate blocking rules at this time
-	blockedDomains := scheduler.EvaluateRulesAtTime(testTime, cfg)
+	blockedDomains := scheduler.EvaluateRulesAtTime(testTime, cfg, nil)
 	result.IsBlocked = proxy.IsDomainBlocked(domain, blockedDomains)
 
 	// Create a DNS query
@@ -206,7 +206,7 @@ func QueryBlocking(timeStr, domain string) error {
 	cfg := config.GetConfig()
 
 	// Evaluate blocking rules at this time
-	blockedDomains := scheduler.EvaluateRulesAtTime(testTime, cfg)
+	blockedDomains := scheduler.EvaluateRulesAtTime(testTime, cfg, nil)
 
 	// Create a DNS query
 	dnsQuery := new(dns.Msg)

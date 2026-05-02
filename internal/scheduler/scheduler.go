@@ -13,6 +13,7 @@ import (
 
 	"github.com/vsangava/sentinel/internal/config"
 	"github.com/vsangava/sentinel/internal/enforcer"
+	"github.com/vsangava/sentinel/internal/proxy"
 )
 
 var activeBlocks = make(map[string]bool)
@@ -219,8 +220,9 @@ func isOvernightSlot(slotStart, slotEnd time.Time) bool {
 
 // EvaluateRulesAtTime evaluates blocking rules at a specific time and returns blocked domains.
 // Returns an empty map immediately if the config has an active pause window.
+// quotaUsage maps group name → minutes used today; pass nil for no quota enforcement.
 // This is the testable function that doesn't depend on time.Now().
-func EvaluateRulesAtTime(t time.Time, cfg config.Config) map[string]bool {
+func EvaluateRulesAtTime(t time.Time, cfg config.Config, quotaUsage map[string]int) map[string]bool {
 	if cfg.IsPaused(t) {
 		return make(map[string]bool)
 	}
@@ -300,7 +302,34 @@ func EvaluateRulesAtTime(t time.Time, cfg config.Config) map[string]bool {
 		}
 	}
 
+	// Quota enforcement: block any group whose daily allowance is exhausted.
+	if len(quotaUsage) > 0 {
+		for _, rule := range cfg.Rules {
+			if !rule.IsActive || rule.DailyQuotaMinutes <= 0 {
+				continue
+			}
+			used := quotaUsage[rule.Group]
+			if used >= rule.DailyQuotaMinutes {
+				for _, d := range cfg.ResolveGroup(rule.Group) {
+					newBlocked[d] = true
+				}
+			}
+		}
+	}
+
 	return newBlocked
+}
+
+// BuildGroupLookup builds a domain→group map covering all domains in all configured
+// groups, regardless of whether they are currently blocked.
+func BuildGroupLookup(cfg config.Config) map[string]string {
+	lookup := make(map[string]string)
+	for group, domains := range cfg.Groups {
+		for _, d := range domains {
+			lookup[d] = group
+		}
+	}
+	return lookup
 }
 
 // CheckWarningDomainsAtTime checks if any domains should trigger warnings within 3 minutes of block start.
@@ -409,7 +438,28 @@ func evaluateRules() {
 		}
 	}
 
-	newBlocked := EvaluateRulesAtTime(now, cfg)
+	// Build domain→group lookup and push to proxy for usage tracking.
+	gl := BuildGroupLookup(cfg)
+	proxy.UpdateGroupLookup(gl)
+
+	// Compute today's quota usage per group (best-effort; nil on error → no quota enforcement).
+	var quotaUsage map[string]int
+	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	if usageEvents, err := proxy.ReadUsageEventsSince(dayStart.Add(-time.Second)); err == nil {
+		var quotaGroups []string
+		for _, rule := range cfg.Rules {
+			if rule.IsActive && rule.DailyQuotaMinutes > 0 {
+				quotaGroups = append(quotaGroups, rule.Group)
+			}
+		}
+		if len(quotaGroups) > 0 {
+			quotaUsage = proxy.ComputeAllGroupUsageMinutes(usageEvents, quotaGroups, now)
+		}
+	} else {
+		log.Printf("scheduler: read usage events: %v", err)
+	}
+
+	newBlocked := EvaluateRulesAtTime(now, cfg, quotaUsage)
 	warningDomains := CheckWarningDomainsAtTime(now, cfg)
 
 	// Compute diffs relative to the previous tick.
@@ -486,11 +536,14 @@ func evaluateRules() {
 		}
 	}
 
-	// Prune events once per calendar day, keeping 30 days of history.
+	// Prune log files once per calendar day.
 	today := now.Truncate(24 * time.Hour)
 	if today.After(lastPruneDay) {
 		if err := PruneOldEvents(30 * 24 * time.Hour); err != nil {
 			log.Printf("scheduler: prune events: %v", err)
+		}
+		if err := proxy.PruneOldUsageEvents(60 * 24 * time.Hour); err != nil {
+			log.Printf("scheduler: prune usage: %v", err)
 		}
 		lastPruneDay = today
 	}

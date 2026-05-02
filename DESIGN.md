@@ -223,7 +223,7 @@ On `Deactivate(domains)` it calls `dns.Deactivate(domains)` then **rebuilds the 
 ### The pure functions
 
 ```go
-func EvaluateRulesAtTime(t time.Time, cfg config.Config) map[string]bool
+func EvaluateRulesAtTime(t time.Time, cfg config.Config, quotaUsage map[string]int) map[string]bool
 func CheckWarningDomainsAtTime(t time.Time, cfg config.Config) []string
 ```
 
@@ -233,10 +233,13 @@ func CheckWarningDomainsAtTime(t time.Time, cfg config.Config) []string
 2. For each rule with `is_active=true`, resolve `cfg.ResolveGroup(rule.Group)` to a domain list (skip the rule if the group is missing or empty), then look up `Schedules[t.Weekday().String()]`.
 3. For each slot, parse `Start`/`End` as `15:04`, build a same-day comparison time, check `slotStart <= now < slotEnd`.
 4. On the first matching slot, add every domain in the resolved group to the result and stop checking remaining slots for that rule.
+5. After schedule evaluation, if `quotaUsage` is non-nil, add every domain from any rule whose group has `used >= DailyQuotaMinutes` — quota-exhausted groups are blocked for the rest of the day regardless of the schedule window.
+
+`quotaUsage` maps group name → minutes used today (computed from DNS usage buckets). Callers pass `nil` when no quota enforcement is needed (e.g. test utilities, `--test-web` mode).
 
 `CheckWarningDomainsAtTime` returns domains whose block starts within `[now, now+3min)`. Logic mirrors the above but compares against the slot's start time, building a warning window of `[start-3min, start)`.
 
-Both functions are deterministic and have no side effects — that's the entire point. Tests construct synthetic `time.Time` and `config.Config` values and assert on the returned maps/slices.
+Both functions are deterministic given their inputs. Tests construct synthetic `time.Time` and `config.Config` values and pass `nil` for `quotaUsage`.
 
 ### The tick loop
 
@@ -290,6 +293,24 @@ func evaluateRules() {
 The `activeEnforcer` is wired by `main.go` via `scheduler.SetEnforcer(e)` before `Start()` is called.
 
 `closeMacOSTabs` and `runMacOSWarning` are no-ops on non-darwin. On darwin they call into the AppleScript abstraction (next section).
+
+### Daily quota tracking
+
+Each scheduler tick also:
+
+1. Calls `BuildGroupLookup(cfg)` — builds a `map[string]string` of domain → group for *all* configured domains (not just currently-blocked ones) and pushes it to `proxy.UpdateGroupLookup`. The proxy uses this to log non-blocked queries.
+2. Reads `usage.jsonl` for today's events and computes minutes-used per quota group via `proxy.ComputeAllGroupUsageMinutes`.
+3. Passes the resulting `quotaUsage` map to `EvaluateRulesAtTime`, which blocks any group whose usage ≥ `DailyQuotaMinutes`.
+
+**Usage measurement:** `proxy/usagelog.go` records each non-blocked DNS query for a group domain as a `UsageEvent{TS, Domain, Group}` in `{configDir}/usage.jsonl`. Usage is aggregated in 5-minute buckets (`TS.Unix() / 300`) and usage minutes = `distinct buckets × 5`. The 5-minute window deduplicates Chrome's aggressive DNS re-resolution (TTL capped at 60s internally) while keeping granularity fine enough for quotas of 15+ minutes.
+
+**Known limitations:**
+- Tracking requires `dns` or `strict` mode. In `hosts` mode the proxy never sees queries.
+- **Browsers with a specific DoH provider manually configured bypass usage tracking.** Chrome's automatic mode will use the system resolver (`127.0.0.1`) and is unaffected — it only upgrades to DoH when the system DNS is a known provider (8.8.8.8, 1.1.1.1), and Sentinel replaces that with `127.0.0.1`. However, if a user has explicitly set a specific DoH provider in browser settings (Chrome: "With Google" / "With Cloudflare"; Firefox: "DNS over HTTPS" set to a provider), queries are sent directly over HTTPS on port 443, completely skipping `127.0.0.1:53`. Those queries never reach the proxy, so no usage event is recorded and quota never fills up. `strict` mode does not fix this — pf blocks connections but does not intercept HTTPS traffic to DoH providers. The fix is to leave browser DNS on automatic (the default), or disable the manually configured DoH provider. See [TROUBLESHOOTING.md §4 Browser DNS-over-HTTPS bypass](./TROUBLESHOOTING.md#browser-dns-over-https-doh-bypass) for diagnostic commands.
+- Background tabs for SPAs (Reddit, YouTube) generate DNS traffic and consume quota even when the user is not actively browsing. This mirrors the behaviour of iOS Screen Time for network-active apps and cannot be solved without a browser extension.
+- The 5-minute bucket slightly over-counts sessions shorter than 5 minutes (a 2-minute visit counts as 5 minutes) and slightly under-counts if another tool (AdGuard Home, systemd-resolved) intercepts queries before they reach Sentinel.
+
+**Retention:** `usage.jsonl` is pruned once per calendar day to 60 days. The block event log (`events.jsonl`) is pruned to 30 days on the same tick.
 
 ### AppleScript abstraction
 
@@ -421,9 +442,10 @@ type Settings struct {
 }
 
 type Rule struct {
-    Group     string                `json:"group"`     // key into Config.Groups
-    IsActive  bool                  `json:"is_active"`
-    Schedules map[string][]TimeSlot `json:"schedules"` // weekday → slots
+    Group             string                `json:"group"`                        // key into Config.Groups
+    IsActive          bool                  `json:"is_active"`
+    DailyQuotaMinutes int                   `json:"daily_quota_minutes,omitempty"` // 0 = no quota
+    Schedules         map[string][]TimeSlot `json:"schedules"`                    // weekday → slots
 }
 
 type TimeSlot struct {
@@ -490,12 +512,13 @@ The scheduler calls `LoadConfig()` once per tick. `web.ConfigHandler` also calls
 | `/` | GET | — | Embedded SPA (HTML/CSS/JS) |
 | `/api/config` | GET | none | Current config — public so the UI can bootstrap the auth token |
 | `/api/config/update` | POST | token | Validate and replace config |
-| `/api/status` | GET, POST | token | `{blocked_domains, last_evaluated, enforcement_mode, paused, paused_until}` |
+| `/api/status` | GET, POST | token | `{blocked_domains, last_evaluated, enforcement_mode, paused, paused_until, quotas[]}` |
 | `/api/test-query?time=&domain=` | GET, POST | token | Evaluate `(time, domain)`; POST a `config` form field to test against a custom config |
 | `/api/hosts-preview` | GET, POST | token | Show `/etc/hosts` lines for the current blocked set without writing |
 | `/api/pf-preview` | GET, POST | token | Show resolved IPs and pf anchor content (strict mode only) |
 | `/api/pause` | POST | token | Body `{"minutes": N}` — `1 <= N <= 240` |
 | `/api/pause` | DELETE | token | Clear pause |
+| `/api/usage` | GET | token | Per-group and per-domain DNS usage minutes; `?range=today\|7d\|30d\|60d` |
 
 ### Auth model
 
