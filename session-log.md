@@ -300,4 +300,23 @@ Development history for this project, captured from Claude Code sessions. Ordere
 
 ---
 
+## May 2 — Session 18: AdGuard Home Comparison & Issue #53 DNS-TTL Quota Design
+**Session ID:** `i-ticklish-falcon` · **PR:** #73
+
+**Opening prompt:**
+> "analyze issue 53. I am thinking this is not great because the user may not actually be on reddit the entire time. so this is not a reflection of site usage. it will be only useful if we can actually track usage."
+
+**What happened:**
+- Explored three approaches to quota tracking: event-log (unblocked time), DNS query counting (visits), and AppleScript tab polling (tab open time). Identified DNS-TTL timing as the cleanest option — no new permissions, cross-browser, passive idle tabs stop generating DNS traffic.
+- Confirmed macOS Screen Time has the same gap: only tracks per-site usage in Safari; Chrome/Firefox/Arc appear as app-level time only. API is locked to MDM entitlements.
+- Researched AdGuard Home scheduling in depth. Confirmed three hard limitations all tracked as their open issues: single time slot per day (#7253), one shared schedule for all services (#7146), predefined catalog only — no custom domain groups (#1692). All are capabilities Sentinel already has today.
+- Documented AdGuard Home comparison in README FAQ section, docs/index.html (new accordion item with comparison table, updated "Schedule-based, per group" feature card), and CLAUDE.md documentation reminder. Shipped as PR #73.
+- Researched background tab DNS behavior for issue #53 plan: Chrome caps its internal DNS cache at 60 seconds and SPAs like Reddit/YouTube maintain WebSocket/polling connections that bypass background timer throttling — so background tabs of social media sites WILL consume quota. Documented as a known limitation.
+- Revised issue #53 implementation plan to DNS-TTL bucket counting (5-minute windows): `usagelog.go` at proxy layer, `groupLookup map[string]string` passed from scheduler to proxy, quota check in `EvaluateRulesAtTime`, 60-day retention, new Usage tab in dashboard. Requires dns or strict mode; hosts mode warning in UI.
+- Posted detailed implementation plan as a comment on issue #53.
+
+**Wrap-up:** AdGuard Home comparison landed in docs (PR #73); issue #53 has a complete DNS-TTL quota implementation plan with background tab behavior confirmed and all limitations documented.
+
+---
+
 *Generated from Claude Code session history on 2026-05-01.*
