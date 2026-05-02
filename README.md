@@ -12,9 +12,25 @@ Sentinel lets you set a schedule for the websites that are hardest to resist —
 
 It works across every browser and every app, not just the one you happen to have open. There's no extension to disable, no toggle to flick.
 
-## Why not a browser extension?
+## Frequently asked questions
+
+### Why not a browser extension?
 
 Browser extensions are easy to bypass — one click to disable, and kids know it. Sentinel works at the operating system level: it rewrites the system hosts file (or runs a local DNS resolver in advanced mode), so blocked sites don't load anywhere on the machine, in any browser or app. Getting around it requires admin credentials.
+
+### How does this compare to DNS blockers like AdGuard Home?
+
+AdGuard Home is a solid network-wide DNS blocker, and Sentinel can run alongside it (see [Running alongside AdGuard Home](TROUBLESHOOTING.md#running-sentinel-alongside-adguard-home-or-any-other-local-dns-service)). But its scheduling model has hard limits that make fine-grained personal productivity rules impractical — all three are tracked as open feature requests on their repo:
+
+| Capability | Sentinel | AdGuard Home |
+|---|---|---|
+| Multiple block windows per day per group | ✅ e.g. 9–12 and 2–6 | ❌ One slot per day ([#7253](https://github.com/AdguardTeam/AdGuardHome/issues/7253)) |
+| Independent schedule per domain group | ✅ Each rule is separate | ❌ One shared schedule for all ([#7146](https://github.com/AdguardTeam/AdGuardHome/issues/7146)) |
+| Custom domain groups | ✅ Any domains you choose | ❌ Predefined catalog only ([#1692](https://github.com/AdguardTeam/AdGuardHome/issues/1692)) |
+| Browser tab auto-close on block | ✅ macOS | ❌ |
+| Pre-block notifications | ✅ macOS | ❌ |
+
+AdGuard Home excels at network-wide content filtering — blocking ad trackers or adult content for every device on a home network. Sentinel is built for personal schedule enforcement on a single machine: granular enough to say "block Reddit 9–12 and 2–6, block gaming all evening, and leave streaming open on weekends." If you already run AdGuard Home, see [Running alongside AdGuard Home](TROUBLESHOOTING.md#running-sentinel-alongside-adguard-home-or-any-other-local-dns-service) to run both together.
 
 ---
 
@@ -24,6 +40,7 @@ Browser extensions are easy to bypass — one click to disable, and kids know it
 
 ## Table of contents
 
+- [FAQ](#frequently-asked-questions)
 - [What it does](#what-it-does)
 - [Platform support](#platform-support)
 - [Install](#install)
@@ -46,6 +63,7 @@ Browser extensions are easy to bypass — one click to disable, and kids know it
 ## What it does
 
 - **Set a schedule, not a willpower battle** — group the sites you want to limit (e.g. `games`, `social`) and define exactly when they're off-limits. Blocks apply the moment the clock hits your window, and lift the moment it ends.
+- **Per-group granularity, multiple windows per day** — each domain group has its own independent schedule. Stack multiple block/allow windows in the same day (e.g. block social media 9–12 and 2–6, block gaming from 8pm onward — all as separate rules).
 - **Tabs close automatically** — when a block begins, Chrome and Safari close any open tabs for blocked sites. No willpower required. (macOS)
 - **A heads-up before the block** — a native notification appears 3 minutes early so you can finish what you're doing before the sites go dark. (macOS)
 - **Live config — no restart needed** — edit the schedule file and save; changes take effect within 60 seconds.

@@ -81,6 +81,15 @@ Config is re-read every scheduler tick — live edits take effect within 60 seco
 - DNS cache flush uses `dscacheutil -flushcache` + `killall -HUP mDNSResponder` on macOS.
 - Port 53 binding requires root; service installation requires admin privileges.
 
+## Documentation
+
+When a significant feature is added or changed, evaluate whether each of the following needs updating and propose changes — don't wait to be asked:
+
+- **`docs/index.html`** — the public landing page; update the features grid, FAQ accordion, or any comparison content that's no longer accurate
+- **`README.md`** — the primary user guide; update the "What it does" list, FAQ section, platform support table, or any affected configuration/usage sections
+- **`DESIGN.md`** — the architecture reference; update data flow, package responsibility table, or any structural decisions that changed
+- **`TROUBLESHOOTING.md`** — update or add entries for any new error conditions, config options, or operational behaviours the feature introduces
+
 ## Session Log
 
 After merging a PR or completing a significant unit of work, append a new entry to `session-log.md` in the repo root. Follow the existing format in that file:

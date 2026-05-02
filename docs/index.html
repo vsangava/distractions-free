@@ -222,8 +222,8 @@
           <div class="w-10 h-10 rounded-xl bg-sky-500/10 flex items-center justify-center mb-4">
             <svg class="w-5 h-5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
           </div>
-          <h3 class="text-white font-semibold mb-2">Schedule-based</h3>
-          <p class="text-slate-400 text-sm leading-relaxed">Define time windows per day of the week. Blocks activate and lift to the minute — mornings, evenings, all day, whatever you need.</p>
+          <h3 class="text-white font-semibold mb-2">Schedule-based, per group</h3>
+          <p class="text-slate-400 text-sm leading-relaxed">Each domain group has its own independent schedule. Stack multiple block windows in the same day — mornings and evenings separately, or 9–12 and 2–6 on weekdays.</p>
         </div>
 
         <!-- Feature: Tab closing -->
@@ -570,6 +570,62 @@
             <div x-show="active === i" x-transition x-cloak class="px-6 pb-5 text-slate-400 text-sm leading-relaxed" x-text="item.a"></div>
           </div>
         </template>
+
+        <!-- AdGuard Home comparison — static item (needs table, x-text can't render HTML) -->
+        <div x-data="{ open: false }" class="bg-[#161616] border border-slate-800 rounded-2xl overflow-hidden">
+          <button
+            @click="open = !open"
+            class="w-full flex items-center justify-between px-6 py-5 text-left text-white font-semibold hover:text-sky-400 transition-colors"
+            :class="open ? 'text-sky-400' : ''"
+          >
+            <span>How does Sentinel compare to DNS blockers like AdGuard Home?</span>
+            <svg class="w-5 h-5 shrink-0 ml-4 transition-transform" :class="open ? 'rotate-45' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+            </svg>
+          </button>
+          <div x-show="open" x-transition x-cloak class="px-6 pb-5 text-slate-400 text-sm leading-relaxed space-y-4">
+            <p>AdGuard Home is a solid network-wide DNS blocker, and Sentinel can run alongside it. But its scheduling model has hard limits that make fine-grained personal rules impractical:</p>
+            <div class="overflow-x-auto rounded-xl border border-slate-700">
+              <table class="w-full text-xs">
+                <thead>
+                  <tr class="bg-slate-800 text-slate-300">
+                    <th class="text-left px-4 py-2.5 font-semibold">Capability</th>
+                    <th class="px-4 py-2.5 text-center font-semibold">Sentinel</th>
+                    <th class="px-4 py-2.5 text-center font-semibold">AdGuard Home</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-800">
+                  <tr class="bg-[#111111]">
+                    <td class="px-4 py-2.5 text-slate-300">Multiple block windows per day per group</td>
+                    <td class="px-4 py-2.5 text-center text-emerald-400">✓ e.g. 9–12 and 2–6</td>
+                    <td class="px-4 py-2.5 text-center text-slate-500">One slot per day</td>
+                  </tr>
+                  <tr class="bg-[#111111]">
+                    <td class="px-4 py-2.5 text-slate-300">Independent schedule per domain group</td>
+                    <td class="px-4 py-2.5 text-center text-emerald-400">✓ Per rule</td>
+                    <td class="px-4 py-2.5 text-center text-slate-500">One shared schedule</td>
+                  </tr>
+                  <tr class="bg-[#111111]">
+                    <td class="px-4 py-2.5 text-slate-300">Custom domain groups</td>
+                    <td class="px-4 py-2.5 text-center text-emerald-400">✓ Any domains</td>
+                    <td class="px-4 py-2.5 text-center text-slate-500">Predefined catalog only</td>
+                  </tr>
+                  <tr class="bg-[#111111]">
+                    <td class="px-4 py-2.5 text-slate-300">Browser tab auto-close on block</td>
+                    <td class="px-4 py-2.5 text-center text-emerald-400">✓ macOS</td>
+                    <td class="px-4 py-2.5 text-center text-slate-500">✗</td>
+                  </tr>
+                  <tr class="bg-[#111111]">
+                    <td class="px-4 py-2.5 text-slate-300">Pre-block notifications</td>
+                    <td class="px-4 py-2.5 text-center text-emerald-400">✓ macOS</td>
+                    <td class="px-4 py-2.5 text-center text-slate-500">✗</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p>AdGuard Home excels at network-wide content filtering — blocking ad trackers or adult content for every device on a home network. Sentinel is built for personal schedule enforcement on a single machine: granular enough to say "block Reddit 9–12 and 2–6, block gaming all evening, and leave streaming open on weekends." The two tools serve different needs and can run alongside each other.</p>
+          </div>
+        </div>
 
       </div>
     </div>
