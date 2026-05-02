@@ -15,6 +15,7 @@ import (
 	"github.com/vsangava/sentinel/internal/config"
 	"github.com/vsangava/sentinel/internal/enforcer"
 	"github.com/vsangava/sentinel/internal/pf"
+	"github.com/vsangava/sentinel/internal/proxy"
 	"github.com/vsangava/sentinel/internal/scheduler"
 	"github.com/vsangava/sentinel/internal/testcli"
 )
@@ -204,7 +205,38 @@ func StatusHandler(w http.ResponseWriter, r *http.Request) {
 			"locked":        cfg.IsLockedByPomodoro(now),
 		}
 	}
+
+	// Include quota usage for any rule that has daily_quota_minutes set.
+	quotaRules := quotaRulesFromConfig(cfg)
+	if len(quotaRules) > 0 {
+		dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		events, _ := proxy.ReadUsageEventsSince(dayStart.Add(-time.Second))
+		quotas := make([]map[string]any, 0, len(quotaRules))
+		for _, rule := range quotaRules {
+			used := proxy.ComputeGroupUsageMinutes(events, rule.Group, now)
+			quotas = append(quotas, map[string]any{
+				"group":            rule.Group,
+				"quota_minutes":    rule.DailyQuotaMinutes,
+				"used_minutes":     used,
+				"quota_exceeded":   used >= rule.DailyQuotaMinutes,
+				"mode_compatible":  cfg.Settings.GetEnforcementMode() != "hosts",
+			})
+		}
+		resp["quotas"] = quotas
+	}
+
 	json.NewEncoder(w).Encode(resp)
+}
+
+// quotaRulesFromConfig returns rules with a positive daily_quota_minutes.
+func quotaRulesFromConfig(cfg config.Config) []config.Rule {
+	var out []config.Rule
+	for _, r := range cfg.Rules {
+		if r.IsActive && r.DailyQuotaMinutes > 0 {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // PauseHandler handles POST /api/pause.
@@ -512,6 +544,107 @@ func EventsHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(events)
 }
 
+// UsageHandler handles GET /api/usage.
+// Query params:
+//   - range: "today" (default) | "7d" | "30d" | "60d"
+//
+// Returns per-group and per-domain usage minutes for the requested range,
+// bucketed in 5-minute windows to avoid counting idle DNS re-resolution.
+func UsageHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	now := time.Now()
+	var since time.Time
+	rangeParam := r.URL.Query().Get("range")
+	switch rangeParam {
+	case "7d":
+		since = now.AddDate(0, 0, -7)
+	case "30d":
+		since = now.AddDate(0, 0, -30)
+	case "60d":
+		since = now.AddDate(0, 0, -60)
+	default:
+		// "today" — from start of calendar day
+		since = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).Add(-time.Second)
+	}
+
+	events, err := proxy.ReadUsageEventsSince(since)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	cfg := config.GetConfig()
+
+	// Per-group totals.
+	type groupRow struct {
+		Group        string `json:"group"`
+		UsedMinutes  int    `json:"used_minutes"`
+		QuotaMinutes int    `json:"quota_minutes,omitempty"`
+	}
+	groupMap := make(map[string]*groupRow)
+	for _, rule := range cfg.Rules {
+		if _, ok := groupMap[rule.Group]; !ok {
+			groupMap[rule.Group] = &groupRow{Group: rule.Group, QuotaMinutes: rule.DailyQuotaMinutes}
+		}
+	}
+
+	// Per-domain totals using 5-min bucket deduplication.
+	type domainRow struct {
+		Domain      string `json:"domain"`
+		Group       string `json:"group"`
+		UsedMinutes int    `json:"used_minutes"`
+	}
+	domainBuckets := make(map[string]map[int64]struct{}) // domain → set of bucket keys
+	groupBuckets := make(map[string]map[int64]struct{})  // group → set of bucket keys
+
+	for _, e := range events {
+		bk := e.TS.Unix() / 300
+		if domainBuckets[e.Domain] == nil {
+			domainBuckets[e.Domain] = make(map[int64]struct{})
+		}
+		domainBuckets[e.Domain][bk] = struct{}{}
+		if groupBuckets[e.Group] == nil {
+			groupBuckets[e.Group] = make(map[int64]struct{})
+		}
+		groupBuckets[e.Group][bk] = struct{}{}
+	}
+
+	// Populate group rows.
+	for group, buckets := range groupBuckets {
+		if row, ok := groupMap[group]; ok {
+			row.UsedMinutes = len(buckets) * 5
+		} else {
+			groupMap[group] = &groupRow{Group: group, UsedMinutes: len(buckets) * 5}
+		}
+	}
+	groups := make([]groupRow, 0, len(groupMap))
+	for _, row := range groupMap {
+		if row.UsedMinutes > 0 || row.QuotaMinutes > 0 {
+			groups = append(groups, *row)
+		}
+	}
+
+	// Build per-domain rows.
+	domainRows := make([]domainRow, 0, len(domainBuckets))
+	// Build domain→group from config for labelling.
+	gl := scheduler.BuildGroupLookup(cfg)
+	for domain, buckets := range domainBuckets {
+		domainRows = append(domainRows, domainRow{
+			Domain:      domain,
+			Group:       gl[domain],
+			UsedMinutes: len(buckets) * 5,
+		})
+	}
+
+	json.NewEncoder(w).Encode(map[string]any{
+		"range":   rangeParam,
+		"groups":  groups,
+		"domains": domainRows,
+	})
+}
+
 func StartWebServer() {
 	staticHandler, err := StaticFileHandler()
 	if err != nil {
@@ -551,6 +684,7 @@ func StartWebServer() {
 		PomodoroStopHandler(w, r)
 	}))
 	mux.HandleFunc("/api/events", authMiddleware(EventsHandler))
+	mux.HandleFunc("/api/usage", authMiddleware(UsageHandler))
 
 	log.Println("Web server starting on http://localhost:8040")
 	if err := http.ListenAndServe("127.0.0.1:8040", mux); err != nil {
@@ -602,6 +736,7 @@ func StartTestWebServer() {
 		PomodoroStopHandler(w, r)
 	}))
 	mux.HandleFunc("/api/events", authMiddleware(EventsHandler))
+	mux.HandleFunc("/api/usage", authMiddleware(UsageHandler))
 
 	log.Println("Test web server starting on http://localhost:8040")
 	if err := http.ListenAndServe("127.0.0.1:8040", mux); err != nil {
