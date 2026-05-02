@@ -323,6 +323,28 @@ Development history for this project, captured from Claude Code sessions. Ordere
 
 ---
 
+## May 2 — Session 19: Issue #53 Implementation — Daily DNS Quota Tracking
+**Session ID:** `i-correct-moth` · **PR:** #74
+
+**Opening prompt:**
+> "pick up the plan documented in issue 53 for implementation. work in a feature branch and ensure you work in incremental steps so that if we run out of tokens in the middle of implementation, we can pick up again."
+
+**What happened:**
+- Verified issue #44 (block event log) was already closed and the prerequisite was satisfied.
+- Fetched the full implementation plan from the last comment on issue #53 (DNS-TTL 5-minute bucket approach).
+- Implemented in 7 atomic commits on `feat/issue-53-daily-quota`:
+  1. `config`: added `DailyQuotaMinutes int` field to `Rule` struct (zero-value = no quota, backward-compatible).
+  2. `proxy/usagelog.go`: new file — `UsageEvent` struct, append/read/prune functions, `ComputeGroupUsageMinutes` using 5-min bucket deduplication.
+  3. `proxy/dns.go`: added `groupLookup map[string]string` package var and `UpdateGroupLookup` function; `handleDNSRequest` logs non-blocked queries for group domains.
+  4. `scheduler`: added `BuildGroupLookup`, changed `EvaluateRulesAtTime` to accept `quotaUsage map[string]int`, added quota enforcement pass, midnight prune of `usage.jsonl` at 60 days, updated all test call sites to pass `nil`.
+  5. `web/server.go`: `StatusHandler` returns `quotas[]` array (group, quota_minutes, used_minutes, quota_exceeded, mode_compatible); new `UsageHandler` for `GET /api/usage?range=today|7d|30d|60d`.
+  6. `web/static/index.html`: quota progress bars in Status tab (green→amber→red), warning badge for hosts mode, new Usage tab with range selector and per-group/per-domain tables.
+  7. Docs: README field reference + API table, DESIGN quota-tracking subsection with known limitations, TROUBLESHOOTING two new entries, landing page feature card + FAQ entry.
+
+**Wrap-up:** Full DNS-TTL quota implementation shipped as PR #74. All 7 packages build and all tests pass.
+
+---
+
 ## May 2 — Session 20: Strict Mode pf Firewall — End-to-End Fixes
 **Session ID:** `45e8b2f6` · **PR:** #76 (fix/strict-mode-pf)
 
