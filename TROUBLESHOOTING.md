@@ -646,3 +646,32 @@ See [§4 macOS AppleScript path](#macos-applescript-path). The most common cause
 ### `clean` says "could not create service handle"
 
 Usually means the binary you're running was built for a different OS. Check `file ./sentinel` and rebuild for the current platform with `make build`.
+
+---
+
+### Quota configured but not enforcing
+
+**Symptom:** `daily_quota_minutes` is set on a rule, the Usage tab shows time being consumed, but the group is never blocked when the quota is reached.
+
+**Cause:** quota enforcement requires `dns` or `strict` enforcement mode. In `hosts` mode, DNS queries go through the OS resolver directly — Sentinel's proxy never sees them, so usage cannot be tracked.
+
+**Fix:** switch to `dns` or `strict` mode in the Manage tab or via the API:
+
+```bash
+TOKEN=$(curl -s http://localhost:8040/api/config | jq -r '.settings.auth_token')
+curl -X POST http://localhost:8040/api/config/update \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "$(curl -s http://localhost:8040/api/config | jq '.settings.enforcement_mode = "strict"')"
+```
+
+The Status tab shows a warning badge on the quota section when the current mode is `hosts`.
+
+---
+
+### Usage tab shows zero data / Usage not accumulating
+
+1. Check enforcement mode — `hosts` mode never populates `usage.jsonl`.
+2. Check that the daemon is running: `sudo ./sentinel status` (macOS) or check services.
+3. Check that the domains you expect to see are configured in a `groups` entry. Only domains in a configured group are tracked.
+4. The Usage tab shows DNS queries, not page views. If the site uses a long-lived connection (e.g. WebSocket) after the initial load, subsequent minutes may not generate new DNS lookups and usage will appear lower than expected.
