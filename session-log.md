@@ -280,4 +280,24 @@ Development history for this project, captured from Claude Code sessions. Ordere
 
 ---
 
+## May 1 — Session 17: Pomodoro Focus Session with Lock-Down Mode
+**Session ID:** `streamed-popcorn` · **PR:** #71 · **Release:** v0.1.11
+
+**Opening prompt:**
+> "lets work on issues 45 and 57 together. lock down mode only activated with pomodoro timer. another indepedent locked session mode is not needed I think. what do you say? show me a plan."
+
+**What happened:**
+- User decided to merge issues #45 (locked sessions / commitment mode) and #57 (Pomodoro timer) into a single feature: starting a Pomodoro work session is the only way to activate lock-down mode — no standalone lock button.
+- Added `PomodoroSession` struct and four config methods (`IsLockedByPomodoro`, `StartPomodoro`, `AdvancePomodoroPhase`, `ClearPomodoro`) to `internal/config/config.go`.
+- Extended `EvaluateRulesAtTime` in `internal/scheduler/scheduler.go` to force all `IsActive` rules on during a work phase (stricter than normal scheduling). Added phase-transition logic in the `evaluateRules` tick (work→break, break→clear) with macOS notifications via the existing `scriptExecutor` interface.
+- Added `POST /api/pomodoro/start`, `DELETE /api/pomodoro` endpoints to `internal/web/server.go`; 423 Locked guards on `POST /api/pause` and `POST /api/config/update` during work phase; Pomodoro state exposed in `GET /api/status`.
+- Dashboard Status tab gets a Pomodoro panel (start controls → live countdown + lock indicator during work phase → stop button during break). Manage tab shows a lock overlay instead of pause buttons during work phase.
+- User asked about the blocked-domains list during a focus session — added a contextual note "🔴 Focus session active — all scheduled domains are forced on" below the list.
+- Fixed a UI bug: after break expiry the "Stop session" button would persist until the scheduler tick cleared the session (~60s). Added a client-side check to detect an expired break phase from the status response and revert to start controls immediately.
+- 19 new tests across `config`, `scheduler`, and `web` packages; all green.
+
+**Wrap-up:** Pomodoro focus session shipped as a unified commitment tool — work phase locks the API and forces all active rules on, break phase restores normal scheduling, session self-clears on break expiry. Released as v0.1.11.
+
+---
+
 *Generated from Claude Code session history on 2026-05-01.*
