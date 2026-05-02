@@ -253,7 +253,7 @@ The default config ships with three groups. `games` and `videos` are blocked dur
 - **`groups`** — named lists of domains that rules are bound to. In `hosts` mode, common prefixes (`www.`, `m.`, `mobile.`, `app.`) are blocked automatically. In `dns` mode, subdomain matching is suffix-based (`a.b.example.com` is blocked if `example.com` is in the group).
 - **`rules[].group`** — must match a key in `groups`.
 - **`rules[].is_active`** — set to `false` to suspend a rule without deleting it.
-- **`rules[].daily_quota_minutes`** *(optional)* — cap how many minutes per calendar day the group is accessible. Once this limit is reached the group is blocked for the rest of the day, regardless of the scheduled window. `0` or omitted means no quota. **Requires `dns` or `strict` enforcement mode** — usage is tracked at the DNS proxy layer and is not available in `hosts` mode. **Browsers with DNS-over-HTTPS (DoH) enabled bypass the proxy entirely**, so their queries are not counted. Disable "Use secure DNS" in Chrome / "DNS over HTTPS" in Firefox to ensure accurate tracking, or switch to `strict` mode and add DoH provider domains (`dns.google`, `cloudflare-dns.com`) to a blocked group to force fallback to the system resolver.
+- **`rules[].daily_quota_minutes`** *(optional)* — cap how many minutes per calendar day the group is accessible. Once this limit is reached the group is blocked for the rest of the day, regardless of the scheduled window. `0` or omitted means no quota. **Requires `dns` or `strict` enforcement mode** — usage is tracked at the DNS proxy layer and is not available in `hosts` mode. Browsers in their default configuration are unaffected. The edge case: if a browser has a **specific DoH provider manually configured** (Chrome set to "With Google" / "With Cloudflare"; Firefox "DNS over HTTPS" set to a provider), it bypasses `127.0.0.1:53` and those queries are not counted. Leaving browser DNS on automatic (the default) avoids this.
 - **`rules[].schedules`** — keyed by weekday (`"Monday"` … `"Sunday"`). Each value is an array of `{start, end}` slots in `HH:MM` 24-hour format. Domains are blocked when the current time falls in `[start, end)`.
 - **`pause`** *(optional)* — `{"until": "<RFC3339 timestamp>"}`. All blocking suspended until that time. Cleared automatically when the timestamp passes.
 
@@ -289,7 +289,7 @@ Three modes are available. **`strict` is recommended on macOS** — it combines 
 
 Runs a local DNS proxy on `127.0.0.1:53` **and** installs a `pf` (Packet Filter) anchor that drops outbound packets to the resolved IPs at the kernel level. On every scheduler tick the enforcer re-resolves all blocked domains and rewrites the firewall table from scratch, so CDN IP rotation doesn't create gaps in coverage.
 
-**Best for:** macOS users who want the strongest blocking. Works against apps that hard-code their own DNS resolver (some VPNs, browsers in DoH mode) because the firewall blocks the IPs directly, not just the names. **Note:** pf blocks connections but does not intercept DNS-over-HTTPS traffic, so daily quota tracking is still inaccurate if a browser's DoH is active — disable "Use secure DNS" in Chrome / "DNS over HTTPS" in Firefox for accurate usage data.
+**Best for:** macOS users who want the strongest blocking. Works against apps that hard-code their own DNS resolver (some VPNs, browsers with a specific DoH provider manually configured) because the firewall blocks the IPs directly, not just the names. **Note:** pf blocks connections but does not intercept DoH traffic, so quota tracking can be inaccurate if a browser has a specific DoH provider manually set — leaving browser DNS on automatic (the default) avoids this.
 
 **macOS only.** If pf setup fails (e.g. missing root), the enforcer degrades to DNS-only and logs a warning.
 
@@ -301,7 +301,7 @@ Runs a local DNS proxy on `127.0.0.1:53`. Blocked domains return `0.0.0.0` (A) a
 
 **Best for:** users who need wildcard subdomain blocking — any `*.example.com` subdomain is blocked if `example.com` is in the group — but don't need firewall-layer enforcement.
 
-**Requires:** pointing your OS DNS at `127.0.0.1` (see [Install](#install) advanced note). Apps that hard-code their own resolver bypass it. **Browsers with DoH active** (Chrome "Use secure DNS", Firefox "DNS over HTTPS") also bypass the proxy — both blocking and usage tracking are ineffective for those browsers unless DoH is disabled.
+**Requires:** pointing your OS DNS at `127.0.0.1` (see [Install](#install) advanced note). Apps that hard-code their own resolver bypass it. Browsers in their default configuration are unaffected — Chrome's automatic mode will not upgrade to DoH when system DNS is `127.0.0.1`. The exception is browsers with a **specific DoH provider manually configured**, which bypass the proxy regardless of system DNS.
 
 ### `hosts` (default, cross-platform)
 

@@ -121,7 +121,6 @@ If the block isn't there during a scheduled window, the scheduler hasn't fired (
 If the block *is* there but the site loads anyway:
 
 - Your browser or app may have cached the DNS resolution. Try a private window, or restart the app.
-- The browser may be using DNS-over-HTTPS (DoH) or DNS-over-TLS (DoT), which bypasses `/etc/hosts`. **Disable DoH** in the browser, or switch to `dns`/`strict` mode (which also won't help against DoH unless you can intercept the upstream — `pf` in strict mode does, since it blocks the resolved IPs at the kernel).
 - The site may be served from a CDN domain not covered by the static prefix list (`""`, `www.`, `m.`, `mobile.`, `app.`). Add the relevant subdomain to the relevant group in `config.json`.
 
 To preview what *would* be written without root:
@@ -303,7 +302,9 @@ If `Setup` failed (logs show `pf anchor setup failed`), the strict enforcer degr
 
 ### Browser DNS-over-HTTPS (DoH) bypass
 
-Modern browsers (Chrome, Firefox, Edge) have a built-in encrypted DNS client that sends queries directly to a DoH provider (e.g. `dns.google`, `cloudflare-dns.com`) over HTTPS on port 443. This completely bypasses the system resolver at `127.0.0.1:53`, so `dns` mode blocks are invisible to the browser even when `nslookup` or `dig` correctly return `0.0.0.0`.
+When a browser has a **specific DoH provider manually configured**, it sends queries directly to that provider over HTTPS on port 443, bypassing the system resolver at `127.0.0.1:53`. This makes `dns` mode blocks invisible to the browser even when `nslookup` or `dig` correctly return `0.0.0.0`.
+
+**This does not affect default browser installs.** Chrome's automatic mode only upgrades to DoH when the system DNS is a known provider (8.8.8.8, 1.1.1.1, etc.). Since Sentinel sets system DNS to `127.0.0.1`, Chrome automatic mode stays on regular DNS and goes through the proxy normally. The problem only occurs when a user has explicitly chosen "With Google" or "With Cloudflare" in `chrome://settings/security`, or equivalent in Firefox.
 
 **How each mode handles it:**
 

@@ -821,7 +821,7 @@
                 Measures time groups were actively used, based on DNS query patterns.
                 Requires <strong>dns</strong> or <strong>strict</strong> enforcement mode.
                 Background tabs for SPAs (Reddit, YouTube) may count toward usage.
-                <strong>Browsers with DNS-over-HTTPS active (Chrome "Use secure DNS", Firefox "DNS over HTTPS") bypass the proxy</strong> — their queries are not counted and quota will not fill accurately. Disable DoH in the browser for reliable tracking.
+                Browsers in their default configuration are unaffected. If you have manually set a specific DoH provider in browser settings (Chrome: "With Google"/"With Cloudflare"; Firefox: "DNS over HTTPS" set to a provider), those queries bypass the proxy and will not be counted.
             </p>
             <div class="usage-range-row" id="usageRangeRow">
                 <span style="font-size:12px;font-weight:600;color:#6c757d;">Range:</span>
