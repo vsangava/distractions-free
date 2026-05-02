@@ -1,8 +1,12 @@
 # Compiled binaries
 sentinel
+sentinel-*
 app
 *.exe
 *.app
+
+# Runtime data files (stored alongside config in production)
+events.jsonl
 
 # OS specific files
 .DS_Store

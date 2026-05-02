@@ -21,6 +21,8 @@ var lastEvalTime time.Time
 
 var activeEnforcer enforcer.Enforcer
 
+var lastPruneDay time.Time
+
 // SetEnforcer wires the enforcement backend used by the scheduler.
 // Must be called before Start().
 func SetEnforcer(e enforcer.Enforcer) {
@@ -404,6 +406,48 @@ func evaluateRules() {
 				log.Printf("scheduler: deactivate failed: %v", err)
 			}
 		}
+	}
+
+	// Log block/unblock events grouped by config group.
+	if len(newlyBlocked) > 0 || len(newlyUnblocked) > 0 {
+		blockedSet := make(map[string]bool, len(newlyBlocked))
+		for _, d := range newlyBlocked {
+			blockedSet[d] = true
+		}
+		unblockedSet := make(map[string]bool, len(newlyUnblocked))
+		for _, d := range newlyUnblocked {
+			unblockedSet[d] = true
+		}
+		var events []BlockEvent
+		for group, domains := range cfg.Groups {
+			var bd, ubd []string
+			for _, d := range domains {
+				if blockedSet[d] {
+					bd = append(bd, d)
+				}
+				if unblockedSet[d] {
+					ubd = append(ubd, d)
+				}
+			}
+			if len(bd) > 0 {
+				events = append(events, BlockEvent{TS: now, Event: "blocked", Group: group, Domains: bd})
+			}
+			if len(ubd) > 0 {
+				events = append(events, BlockEvent{TS: now, Event: "unblocked", Group: group, Domains: ubd})
+			}
+		}
+		if err := AppendEvents(events); err != nil {
+			log.Printf("scheduler: append events: %v", err)
+		}
+	}
+
+	// Prune events once per calendar day, keeping 30 days of history.
+	today := now.Truncate(24 * time.Hour)
+	if today.After(lastPruneDay) {
+		if err := PruneOldEvents(30 * 24 * time.Hour); err != nil {
+			log.Printf("scheduler: prune events: %v", err)
+		}
+		lastPruneDay = today
 	}
 
 	if len(warningDomains) > 0 {

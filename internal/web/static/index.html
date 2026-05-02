@@ -217,6 +217,38 @@
         .slot-list { display: flex; flex-direction: column; gap: 2px; }
         .slot-tag  { font-family: monospace; font-size: 12px; color: #495057; }
 
+        /* History table */
+        .history-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .history-table th {
+            text-align: left;
+            padding: 7px 12px;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #adb5bd;
+            border-bottom: 1px solid #e9ecef;
+        }
+        .history-table td {
+            padding: 9px 12px;
+            border-bottom: 1px solid #f1f3f5;
+            vertical-align: top;
+        }
+        .history-table tr:last-child td { border-bottom: none; }
+        .history-empty { font-size: 13px; color: #adb5bd; padding: 12px 0; }
+        .event-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+        }
+        .event-badge.blocked   { background: #fff5f5; color: #dc3545; }
+        .event-badge.unblocked { background: #f0fff4; color: #28a745; }
+        .history-domains { font-family: monospace; font-size: 12px; color: #495057; }
+
         /* Buttons */
         button {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -466,6 +498,7 @@
         <button class="tab-button active" onclick="switchTab('status')">Status</button>
         <button class="tab-button" onclick="switchTab('test')">Test</button>
         <button class="tab-button" onclick="switchTab('manage')">Manage <span class="lock-badge" id="manageLockBadge">🔒</span></button>
+        <button class="tab-button" onclick="switchTab('history')">History</button>
     </div>
 
     <!-- STATUS TAB -->
@@ -659,6 +692,17 @@
             </div>
         </div>
     </div>
+
+    <!-- HISTORY TAB -->
+    <div id="historyTab" class="tab-content">
+        <div class="section">
+            <div class="section-header">
+                <div class="section-title">Block &amp; Unblock Events</div>
+                <button class="btn-sm btn-success" onclick="loadHistory()">↻ Refresh</button>
+            </div>
+            <div id="historyContent"><p style="color:#adb5bd;font-size:13px;">Loading…</p></div>
+        </div>
+    </div>
 </div>
 <script>
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -764,17 +808,18 @@ async function saveEnforcementMode() {
 
 // ── Tab switching ─────────────────────────────────────────────────────────────
 function switchTab(tab) {
-    ['status','test','manage'].forEach(function(t) {
+    ['status','test','manage','history'].forEach(function(t) {
         document.getElementById(t + 'Tab').classList.remove('active');
     });
     document.querySelectorAll('.tab-button').forEach(function(b) {
         b.classList.remove('active');
     });
     document.getElementById(tab + 'Tab').classList.add('active');
-    var idx = {status: 0, test: 1, manage: 2}[tab];
+    var idx = {status: 0, test: 1, manage: 2, history: 3}[tab];
     document.querySelectorAll('.tab-button')[idx].classList.add('active');
 
     if (tab === 'status') { loadStatus(); }
+    if (tab === 'history') { loadHistory(); }
     if (tab === 'manage' && !manageUnlocked) {
         setTimeout(function() {
             var first = document.querySelectorAll('.pin-box')[0];
@@ -1370,6 +1415,40 @@ async function resumeBlocking() {
     } catch(e) {
         showBanner('managePauseMsg', 'error', 'Error: ' + e.message);
     }
+}
+
+// ── History tab ───────────────────────────────────────────────────────────────
+async function loadHistory() {
+    var el = document.getElementById('historyContent');
+    el.innerHTML = '<p style="color:#adb5bd;font-size:13px;">Loading…</p>';
+    try {
+        var res = await fetch('/api/events?limit=200', {
+            headers: {'X-Auth-Token': authToken}
+        });
+        var events = await res.json();
+        if (!res.ok) {
+            el.innerHTML = '<p style="color:#dc3545;font-size:13px;">Error: ' + (events.error || 'failed to load') + '</p>';
+            return;
+        }
+        if (!events || events.length === 0) {
+            el.innerHTML = '<p class="history-empty">No events recorded yet. Block/unblock transitions will appear here.</p>';
+            return;
+        }
+        // Show newest first
+        var rows = events.slice().reverse().map(function(e) {
+            var ts = new Date(e.ts).toLocaleString();
+            var badge = '<span class="event-badge ' + e.event + '">' + e.event + '</span>';
+            var domains = '<span class="history-domains">' + (e.domains || []).join(', ') + '</span>';
+            return '<tr><td>' + ts + '</td><td>' + badge + '</td><td>' + escapeHtml(e.group) + '</td><td>' + domains + '</td></tr>';
+        }).join('');
+        el.innerHTML = '<table class="history-table"><thead><tr><th>Time</th><th>Event</th><th>Group</th><th>Domains</th></tr></thead><tbody>' + rows + '</tbody></table>';
+    } catch(e) {
+        el.innerHTML = '<p style="color:#dc3545;font-size:13px;">Error: ' + e.message + '</p>';
+    }
+}
+
+function escapeHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 // ── Keyboard shortcuts ────────────────────────────────────────────────────────

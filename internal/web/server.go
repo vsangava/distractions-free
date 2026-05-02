@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/vsangava/sentinel/internal/config"
@@ -387,6 +388,36 @@ func PFPreviewHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(preview)
 }
 
+func EventsHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	var since time.Time
+	if s := r.URL.Query().Get("since"); s != "" {
+		var err error
+		since, err = time.Parse(time.RFC3339, s)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "invalid since: " + err.Error()})
+			return
+		}
+	}
+
+	limit := 200
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if n, err := strconv.Atoi(l); err == nil && n > 0 {
+			limit = n
+		}
+	}
+
+	events, err := scheduler.ReadEvents(since, limit)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	json.NewEncoder(w).Encode(events)
+}
+
 func StartWebServer() {
 	staticHandler, err := StaticFileHandler()
 	if err != nil {
@@ -411,6 +442,7 @@ func StartWebServer() {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
 	}))
+	mux.HandleFunc("/api/events", authMiddleware(EventsHandler))
 
 	log.Println("Web server starting on http://localhost:8040")
 	if err := http.ListenAndServe("127.0.0.1:8040", mux); err != nil {
@@ -447,6 +479,7 @@ func StartTestWebServer() {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
 	}))
+	mux.HandleFunc("/api/events", authMiddleware(EventsHandler))
 
 	log.Println("Test web server starting on http://localhost:8040")
 	if err := http.ListenAndServe("127.0.0.1:8040", mux); err != nil {
