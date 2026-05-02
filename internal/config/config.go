@@ -24,9 +24,10 @@ type TimeSlot struct {
 // Rule binds a named group of domains to a weekly schedule.
 // Group must reference a key in Config.Groups.
 type Rule struct {
-	Group     string                `json:"group"`
-	IsActive  bool                  `json:"is_active"`
-	Schedules map[string][]TimeSlot `json:"schedules"`
+	Group             string                `json:"group"`
+	IsActive          bool                  `json:"is_active"`
+	DailyQuotaMinutes int                   `json:"daily_quota_minutes,omitempty"`
+	Schedules         map[string][]TimeSlot `json:"schedules"`
 }
 
 type Settings struct {
