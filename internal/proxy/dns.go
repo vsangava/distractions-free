@@ -40,6 +40,7 @@ func GetDNSResponse(r *dns.Msg, blockedDomainsList map[string]bool, primaryDNS, 
 	m := new(dns.Msg)
 	m.SetReply(r)
 	m.Compress = false
+	m.RecursionAvailable = true
 
 	if len(r.Question) == 0 {
 		return m, nil

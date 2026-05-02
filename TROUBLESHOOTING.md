@@ -157,6 +157,14 @@ networksetup -setdnsservers Wi-Fi 127.0.0.1
 sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder
 ```
 
+If `nslookup <domain>` says `Got recursion not available from 127.0.0.1, trying next server` and falls through to your backup DNS, the service is running an old binary that predates the RA-bit fix. Restart it with:
+
+```bash
+sudo ./sentinel stop && sudo ./sentinel start
+```
+
+See [§6 Restarting after a binary update](#restarting-after-a-binary-update) for why `launchctl stop/start` is not sufficient here.
+
 ### `strict` mode
 
 Strict mode = DNS mode + pf. Verify both layers:
@@ -284,6 +292,12 @@ sudo ./sentinel uninstall
 ls ~/Library/LaunchAgents/com.github.sentinel.plist  # should be gone
 launchctl list | grep sentinel                       # should be empty
 ```
+
+#### Restarting after a binary update
+
+Always use `sudo ./sentinel stop && sudo ./sentinel start` — not raw `launchctl stop/start`.
+
+`launchctl stop <label>` sends SIGTERM, but with `KeepAlive: true` in the plist launchd immediately relaunches the process. Running `launchctl start` on top of that races the KeepAlive restart and can silently no-op. The `./sentinel stop/start` path calls `launchctl unload`/`launchctl load` through the `kardianos/service` library, which fully unregisters and re-registers the job — guaranteeing the new binary is exec'd.
 
 ---
 
