@@ -218,7 +218,7 @@ On `Deactivate(domains)` it calls `dns.Deactivate(domains)` then **rebuilds the 
 `internal/scheduler/scheduler.go`. The orchestrator. Two responsibilities:
 
 1. Drive a 1-minute ticker that re-evaluates rules and tells the enforcer about changes.
-2. Fire the macOS-specific UI side effects: 3-minute warning notification and tab-closing AppleScript.
+2. Fire the macOS-specific UI side effects: 3-minute warning notification and per-tick tab-closing AppleScript.
 
 ### The pure functions
 
@@ -276,13 +276,19 @@ func evaluateRules() {
     // 3. Push diff through the active enforcer.
     if len(newlyBlocked) > 0 {
         activeEnforcer.Activate(newlyBlocked)
-        closeMacOSTabs(newlyBlocked)
     }
     if len(newlyUnblocked) > 0 {
         activeEnforcer.Deactivate(newlyUnblocked)
     }
 
-    // 4. Fire warnings, debounced per-domain to once per minute.
+    // 4. Per-tick tab closer (every tick, not just on transitions). Catches tabs
+    //    that survived the initial block — opened mid-window via DoH bypass,
+    //    iCloud Private Relay, memorized IPs, or stale reloads. Filters _doh
+    //    group out of the probe set before checking browsers, since DoH
+    //    endpoints aren't sites users visit with browsers.
+    runPerTickCloseTabs(newBlocked, cfg, browserTabProbe)
+
+    // 5. Fire warnings, debounced per-domain to once per minute.
     if len(warningDomains) > 0 {
         // for each domain, check lastWarningTime[domain]; if >=1min ago, run.
         runMacOSWarning(domainsToWarn)
@@ -293,6 +299,8 @@ func evaluateRules() {
 The `activeEnforcer` is wired by `main.go` via `scheduler.SetEnforcer(e)` before `Start()` is called.
 
 `closeMacOSTabs` and `runMacOSWarning` are no-ops on non-darwin. On darwin they call into the AppleScript abstraction (next section).
+
+`runPerTickCloseTabs` first applies the `_doh` filter to the blocked set, then probes browsers via `browserTabProbe` (a swappable `func([]string) []string`). Only when the probe returns at least one open match does it fire `closeMacOSTabs`, so the steady-state cost when no browsers are open is one cheap osascript probe per tick. The reason for running every tick rather than only on transitions: in strict mode, IP-layer enforcement has fundamental gaps (Safari iCloud Private Relay, browser DoH, geo-anycast IP mismatches), so a tab opened *during* an active block window — when there's no transition for the close path to hook on — would otherwise stay open forever. See issue #81.
 
 ### Daily quota tracking
 
@@ -330,9 +338,11 @@ type ScriptExecutor interface {
 
 The default executor (`MacOSScriptExecutor`) writes the script to `/tmp/df_script.scpt` and runs it via `osascript`. If the daemon is running as root, it shells out as the console user (via `su - <user> -c osascript ...`) so the notification appears in the user's UI session and AppleScript can talk to Chrome/Safari. Console user is detected via `stat -f %Su /dev/console`.
 
-The close-tabs script enumerates Chrome and Safari windows, matches tab URLs against the blocked domain list (substring match), and closes matching tabs in both browsers.
+The close-tabs script enumerates Chrome, Safari, Arc, and Brave windows, matches tab URLs against the blocked domain list (substring match), and closes matching tabs in all four browsers. The script also tracks a `closedCount` and emits a single bundled `display notification` ("Closed N tab(s) on ⟨domains⟩") at the end when `closedCount > 0` — close + notify happen in one atomic osascript invocation, so there is at most one fork/exec per tick.
 
-The warning script first checks which of the upcoming-blocked domains actually have open browser tabs (`getOpenBrowserDomains`) and only fires a notification if there's at least one. This is why the warning UX isn't noisy: if you don't have YouTube open at 08:57, you don't get pinged about it at 09:00.
+The per-tick driver (`runPerTickCloseTabs`) gates the script on `getOpenBrowserDomains` first, so when no browsers are running or no tabs match, no close script is generated and no notification fires. The probe AppleScript itself is also guarded with `if application X is running` per browser, returning silently when none are open.
+
+The warning script (3-minute pre-block) similarly checks `getOpenBrowserDomains` before firing a notification. This is why the warning UX isn't noisy: if you don't have YouTube open at 08:57, you don't get pinged about it at 09:00.
 
 ### Internal state
 

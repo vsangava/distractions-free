@@ -7,13 +7,16 @@ import (
 	"github.com/vsangava/sentinel/internal/pf"
 )
 
-// dohGroupName names the special group of DNS-over-HTTPS / DNS-over-TLS endpoints.
+// DohGroupName names the special group of DNS-over-HTTPS / DNS-over-TLS endpoints.
 // Its domains get a different pf treatment from the regular blocked set: instead of
 // the all-port block used for site IPs, the resolved DoH/DoT IPs get port-restricted
 // rules (TCP/443 for DoH, TCP+UDP/853 for DoT). Plain DNS on UDP/53 is left reachable
 // so the daemon's own backup_dns (often 1.1.1.1:53 — same IP as a DoH endpoint) keeps
 // resolving real domains. See pf.GenerateAnchorContentMixed.
-const dohGroupName = "_doh"
+//
+// Exported so the scheduler can identify and skip these domains in browser-tab
+// matching paths — DoH endpoints aren't sites users visit with browsers.
+const DohGroupName = "_doh"
 
 // StrictEnforcer composes DNS-proxy blocking with pf firewall blocking.
 // Domains in the _doh group flow into a port-restricted pf section instead of the
@@ -86,7 +89,7 @@ func (e *StrictEnforcer) Refresh() {
 func (e *StrictEnforcer) reloadPF() {
 	cfg := config.GetConfig()
 	dohSet := make(map[string]bool)
-	for _, d := range cfg.ResolveGroup(dohGroupName) {
+	for _, d := range cfg.ResolveGroup(DohGroupName) {
 		dohSet[d] = true
 	}
 

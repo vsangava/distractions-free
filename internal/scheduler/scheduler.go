@@ -89,14 +89,29 @@ func (g *MacOSAppleScriptGenerator) GenerateWarningScript(domains []string) stri
 
 func (g *MacOSAppleScriptGenerator) GenerateCloseTabsScript(domains []string) string {
 	var quotedDomains []string
+	var displayDomains []string
 	for _, d := range domains {
-		quotedDomains = append(quotedDomains, fmt.Sprintf(`"%s"`, strings.TrimPrefix(d, "www.")))
+		stripped := strings.TrimPrefix(d, "www.")
+		quotedDomains = append(quotedDomains, fmt.Sprintf(`"%s"`, stripped))
+		displayDomains = append(displayDomains, stripped)
 	}
 	domainListStr := "{" + strings.Join(quotedDomains, ", ") + "}"
 
+	// Build the notification body. Include the domain list when short, fall back to
+	// a count of distinct sites for longer lists so the notification stays readable.
+	// The actual closed-tab count is computed in AppleScript (`closedCount`) and
+	// interpolated at runtime.
+	var notifyMsg string
+	if len(displayDomains) <= 3 {
+		notifyMsg = fmt.Sprintf(`"Closed " & closedCount & " tab(s) on %s"`, strings.Join(displayDomains, ", "))
+	} else {
+		notifyMsg = fmt.Sprintf(`"Closed " & closedCount & " distracting tab(s) across %d sites"`, len(displayDomains))
+	}
+
 	return fmt.Sprintf(`
 		set domainsToBlock to %s
-		
+		set closedCount to 0
+
 		if application "Google Chrome" is running then
 			tell application "Google Chrome"
 				set tabsToClose to {}
@@ -111,6 +126,7 @@ func (g *MacOSAppleScriptGenerator) GenerateCloseTabsScript(domains []string) st
 						end repeat
 					end repeat
 				end repeat
+				set closedCount to closedCount + (count of tabsToClose)
 				repeat with t in tabsToClose
 					close t
 				end repeat
@@ -131,6 +147,7 @@ func (g *MacOSAppleScriptGenerator) GenerateCloseTabsScript(domains []string) st
 						end repeat
 					end repeat
 				end repeat
+				set closedCount to closedCount + (count of tabsToClose)
 				repeat with t in tabsToClose
 					close t
 				end repeat
@@ -151,6 +168,7 @@ func (g *MacOSAppleScriptGenerator) GenerateCloseTabsScript(domains []string) st
 						end repeat
 					end repeat
 				end repeat
+				set closedCount to closedCount + (count of tabsToClose)
 				repeat with t in tabsToClose
 					close t
 				end repeat
@@ -171,12 +189,17 @@ func (g *MacOSAppleScriptGenerator) GenerateCloseTabsScript(domains []string) st
 						end repeat
 					end repeat
 				end repeat
+				set closedCount to closedCount + (count of tabsToClose)
 				repeat with t in tabsToClose
 					close t
 				end repeat
 			end tell
 		end if
-	`, domainListStr)
+
+		if closedCount > 0 then
+			display notification %s with title "Sentinel" subtitle "Tab Closed"
+		end if
+	`, domainListStr, notifyMsg)
 }
 
 // Global generator - can be replaced for testing
@@ -488,7 +511,6 @@ func evaluateRules() {
 			if err := activeEnforcer.Activate(newlyBlocked); err != nil {
 				log.Printf("scheduler: activate failed: %v", err)
 			}
-			closeMacOSTabs(newlyBlocked)
 		}
 		if len(newlyUnblocked) > 0 {
 			if err := activeEnforcer.Deactivate(newlyUnblocked); err != nil {
@@ -502,6 +524,13 @@ func evaluateRules() {
 			activeEnforcer.Refresh()
 		}
 	}
+
+	// Per-tick browser tab closer. Runs every tick (not just on transitions) so
+	// tabs that survive the initial block — opened mid-window via DoH bypass,
+	// iCloud Private Relay, memorized IPs, or stale reloads — get closed within
+	// ~60s. Filters out the _doh group: those endpoints aren't sites users visit
+	// with browsers, and probing for them wastes osascript work.
+	runPerTickCloseTabs(newBlocked, cfg, browserTabProbe)
 
 	// Log block/unblock events grouped by config group.
 	if len(newlyBlocked) > 0 || len(newlyUnblocked) > 0 {
@@ -749,6 +778,52 @@ func closeMacOSTabs(domains []string) {
 	script := scriptGenerator.GenerateCloseTabsScript(domains)
 	scriptExecutor.LogScript(script)
 	scriptExecutor.ExecuteScript(script)
+}
+
+// browserTabProbe identifies which of the given blocked domains are open in
+// supported macOS browsers. Replaceable in tests so the per-tick close path can
+// be exercised without forking osascript.
+var browserTabProbe func(domains []string) []string = getOpenBrowserDomains
+
+// browserTargetableDomains returns the subset of `blocked` that should be
+// searched for in browser tabs — i.e., everything except the _doh group.
+// DoH/DoT endpoints are blocked at the IP layer (pf in strict mode); they are
+// not sites users visit with browsers, so probing for them in tabs is wasted
+// osascript work and risks false positives if a user legitimately visits a
+// DoH provider's marketing page.
+func browserTargetableDomains(blocked map[string]bool, cfg config.Config) []string {
+	dohSet := make(map[string]bool)
+	for _, d := range cfg.ResolveGroup(enforcer.DohGroupName) {
+		dohSet[d] = true
+	}
+	out := make([]string, 0, len(blocked))
+	for d := range blocked {
+		if dohSet[d] {
+			continue
+		}
+		out = append(out, d)
+	}
+	return out
+}
+
+// runPerTickCloseTabs is invoked every scheduler tick. It probes for blocked
+// domains that have open tabs (via probe) and, when any match, runs a single
+// osascript that closes the tabs and emits a bundled "Closed N tab(s)…"
+// notification. Silent no-op when nothing is blocked, no targetable domains
+// remain after the _doh filter, or no matching tabs are open.
+func runPerTickCloseTabs(blocked map[string]bool, cfg config.Config, probe func([]string) []string) {
+	if len(blocked) == 0 {
+		return
+	}
+	targets := browserTargetableDomains(blocked, cfg)
+	if len(targets) == 0 {
+		return
+	}
+	openDomains := probe(targets)
+	if len(openDomains) == 0 {
+		return
+	}
+	closeMacOSTabs(openDomains)
 }
 
 func sendPomodoroNotification(title, message string) {

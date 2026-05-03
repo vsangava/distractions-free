@@ -383,7 +383,20 @@ Common gotchas:
 
 - **Running as root via launchd, but no console user detected.** `osascript` invoked as root with no user context produces a notification nobody can see. The daemon detects the console user via `stat -f %Su /dev/console` and shells out via `su - <user> -c osascript ...`. If `/dev/console` returns `root` (no one logged in), notifications are silently skipped.
 - **macOS Automation permissions.** First run, macOS prompts: *"sentinel wants to control 'Google Chrome'."* If you click Don't Allow, AppleScript silently fails forever after. Reset in System Settings → Privacy & Security → Automation.
-- **Browsers not running.** The warning script first checks for open tabs; if no Chrome or Safari window matches, the notification is suppressed by design.
+- **Browsers not running.** Both the warning script and the per-tick close-tabs script first probe for open tabs; if no Chrome / Safari / Arc / Brave window matches, the script is suppressed by design.
+
+Behavior note: the close-tabs script runs every scheduler tick (every minute) while a block is active, not just at the moment a block starts. This is so a tab opened *during* an active window — e.g. via Safari iCloud Private Relay or browser DoH, both of which can bypass DNS / pf — still gets closed within ~60 s. Domains in the `_doh` group are excluded from the browser probe (DoH endpoints aren't sites users visit with browsers).
+
+**Incognito / private browsing coverage**
+
+| Browser | Private windows closeable? | Why |
+|---|---|---|
+| Google Chrome | ✅ Yes | Chrome's AppleScript dictionary exposes every window regardless of `mode` (`"normal"` / `"incognito"`); `windows` enumeration includes incognito tabs and our `URL of t` reads them. |
+| Brave Browser | ✅ Yes | Chromium-based; inherits Chrome's scripting model. |
+| Arc | ✅ Most likely | Chromium under the hood with the same `windows / tabs / URL` surface. Arc's window architecture (Spaces, Little Arc) is unusual but its private windows behave like Chromium incognito under AppleScript. Worth a one-time manual check on your install. |
+| Safari | ❌ **No — fundamental limitation** | Safari deliberately omits private browsing windows from the AppleScript `windows` collection (verified: `Safari.sdef` has no scripting surface for private browsing). This is Apple's privacy guarantee — automation cannot see private tabs. The same architectural gap as iCloud Private Relay (see issue #77). |
+
+If blocking Safari Private Browsing is critical for your use case, the fix is to disable private browsing entirely via a configuration profile / MDM payload (`SafariAllowPrivateBrowsing = false`) rather than try to chase it via automation. Sentinel cannot close what AppleScript cannot see.
 
 ---
 
@@ -709,9 +722,9 @@ sudo ./sentinel start
 # logs should show "pf: anchor installed"
 ```
 
-### Tabs don't close on block start
+### Tabs don't close while a block is active
 
-See [§4 macOS AppleScript path](#macos-applescript-path). The most common cause is denied automation permissions for Chrome/Safari — fix in System Settings → Privacy & Security → Automation.
+See [§4 macOS AppleScript path](#macos-applescript-path). The most common cause is denied automation permissions for Chrome/Safari/Arc/Brave — fix in System Settings → Privacy & Security → Automation. The close-tabs script runs every minute during an active block, so a tab opened mid-window should close within ~60 s; if it doesn't, check the automation permissions and the console-user/launchd path.
 
 ### `clean` says "could not create service handle"
 

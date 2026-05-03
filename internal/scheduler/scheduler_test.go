@@ -677,6 +677,225 @@ func TestGenerateCloseTabsScript_IncludesArcAndBrave(t *testing.T) {
 	}
 }
 
+// ── Per-tick close-tabs tests ────────────────────────────────────────────────
+
+func TestGenerateCloseTabsScript_EmbedsNotification(t *testing.T) {
+	g := &MacOSAppleScriptGenerator{}
+	script := g.GenerateCloseTabsScript([]string{"facebook.com"})
+
+	if !strings.Contains(script, "display notification") {
+		t.Error("expected close-tabs script to embed display notification")
+	}
+	if !strings.Contains(script, "closedCount") {
+		t.Error("expected close-tabs script to track closedCount")
+	}
+	if !strings.Contains(script, `with title "Sentinel"`) {
+		t.Error("expected notification to have Sentinel title")
+	}
+	if !strings.Contains(script, `subtitle "Tab Closed"`) {
+		t.Error("expected notification to have Tab Closed subtitle")
+	}
+}
+
+func TestGenerateCloseTabsScript_ShortDomainListInNotification(t *testing.T) {
+	g := &MacOSAppleScriptGenerator{}
+	script := g.GenerateCloseTabsScript([]string{"facebook.com", "tiktok.com"})
+
+	if !strings.Contains(script, "facebook.com, tiktok.com") {
+		t.Error("expected notification body to include short domain list")
+	}
+	if strings.Contains(script, "across") {
+		t.Error("did not expect long-list copy for a 2-domain payload")
+	}
+}
+
+func TestGenerateCloseTabsScript_LongDomainListSummarised(t *testing.T) {
+	g := &MacOSAppleScriptGenerator{}
+	script := g.GenerateCloseTabsScript([]string{"a.com", "b.com", "c.com", "d.com", "e.com"})
+
+	if !strings.Contains(script, "across 5 sites") {
+		t.Error("expected notification body to summarise long list as 'across N sites'")
+	}
+}
+
+func TestGenerateCloseTabsScript_StripsWWWPrefix(t *testing.T) {
+	g := &MacOSAppleScriptGenerator{}
+	script := g.GenerateCloseTabsScript([]string{"www.facebook.com"})
+
+	if !strings.Contains(script, `"facebook.com"`) {
+		t.Error("expected www.* prefix to be stripped from quoted domain list")
+	}
+	if strings.Contains(script, `"www.facebook.com"`) {
+		t.Error("did not expect www.facebook.com to appear in quoted domain list")
+	}
+}
+
+func TestBrowserTargetableDomains_FiltersDoH(t *testing.T) {
+	cfg := config.Config{
+		Groups: map[string][]string{
+			"social": {"facebook.com"},
+			"_doh":   {"dns.google", "cloudflare-dns.com"},
+		},
+	}
+	blocked := map[string]bool{
+		"facebook.com":       true,
+		"dns.google":         true,
+		"cloudflare-dns.com": true,
+	}
+
+	targets := browserTargetableDomains(blocked, cfg)
+
+	for _, d := range targets {
+		if d == "dns.google" || d == "cloudflare-dns.com" {
+			t.Errorf("browserTargetableDomains returned DoH domain %q (should be filtered)", d)
+		}
+	}
+	found := false
+	for _, d := range targets {
+		if d == "facebook.com" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("browserTargetableDomains dropped non-DoH domain facebook.com")
+	}
+}
+
+func TestBrowserTargetableDomains_NoDohGroup(t *testing.T) {
+	cfg := config.Config{
+		Groups: map[string][]string{"social": {"facebook.com"}},
+	}
+	blocked := map[string]bool{"facebook.com": true}
+
+	targets := browserTargetableDomains(blocked, cfg)
+
+	if len(targets) != 1 || targets[0] != "facebook.com" {
+		t.Errorf("expected [facebook.com], got %v", targets)
+	}
+}
+
+// withTestExecutor swaps in a TestScriptExecutor for the duration of the test
+// and returns it so assertions can read captured scripts.
+func withTestExecutor(t *testing.T) *TestScriptExecutor {
+	t.Helper()
+	orig := GetScriptExecutor()
+	te := &TestScriptExecutor{}
+	SetScriptExecutor(te)
+	t.Cleanup(func() { SetScriptExecutor(orig) })
+	return te
+}
+
+func TestRunPerTickCloseTabs_FiresWhenTabsOpen(t *testing.T) {
+	te := withTestExecutor(t)
+
+	cfg := config.Config{
+		Groups: map[string][]string{
+			"social": {"facebook.com", "tiktok.com"},
+			"_doh":   {"dns.google"},
+		},
+	}
+	blocked := map[string]bool{
+		"facebook.com": true,
+		"dns.google":   true, // should be filtered before reaching probe
+	}
+
+	probe := func(domains []string) []string {
+		for _, d := range domains {
+			if d == "dns.google" {
+				t.Errorf("probe received DoH domain %q (should be filtered before probe)", d)
+			}
+		}
+		return []string{"facebook.com"}
+	}
+
+	runPerTickCloseTabs(blocked, cfg, probe)
+
+	if len(te.executedScripts) != 1 {
+		t.Fatalf("expected exactly one script executed, got %d", len(te.executedScripts))
+	}
+	if !strings.Contains(te.executedScripts[0], "facebook.com") {
+		t.Error("expected close script to reference facebook.com")
+	}
+	if strings.Contains(te.executedScripts[0], "dns.google") {
+		t.Error("close script must not reference filtered DoH domain")
+	}
+}
+
+func TestRunPerTickCloseTabs_SilentWhenNoTabsOpen(t *testing.T) {
+	te := withTestExecutor(t)
+
+	cfg := config.Config{Groups: map[string][]string{"social": {"facebook.com"}}}
+	blocked := map[string]bool{"facebook.com": true}
+
+	runPerTickCloseTabs(blocked, cfg, func([]string) []string { return nil })
+
+	if len(te.executedScripts) != 0 {
+		t.Errorf("expected no scripts executed when probe returns empty, got %d", len(te.executedScripts))
+	}
+}
+
+func TestRunPerTickCloseTabs_SkipsProbeWhenAllDomainsAreDoH(t *testing.T) {
+	te := withTestExecutor(t)
+
+	cfg := config.Config{
+		Groups: map[string][]string{
+			"_doh": {"dns.google", "cloudflare-dns.com"},
+		},
+	}
+	blocked := map[string]bool{
+		"dns.google":         true,
+		"cloudflare-dns.com": true,
+	}
+
+	probeCalled := false
+	runPerTickCloseTabs(blocked, cfg, func([]string) []string {
+		probeCalled = true
+		return nil
+	})
+
+	if probeCalled {
+		t.Error("probe should not be called when every blocked domain is in _doh")
+	}
+	if len(te.executedScripts) != 0 {
+		t.Errorf("expected no scripts executed, got %d", len(te.executedScripts))
+	}
+}
+
+func TestRunPerTickCloseTabs_SkipsProbeWhenNothingBlocked(t *testing.T) {
+	te := withTestExecutor(t)
+
+	probeCalled := false
+	runPerTickCloseTabs(map[string]bool{}, config.Config{}, func([]string) []string {
+		probeCalled = true
+		return nil
+	})
+
+	if probeCalled {
+		t.Error("probe should not be called when blocked map is empty")
+	}
+	if len(te.executedScripts) != 0 {
+		t.Errorf("expected no scripts executed, got %d", len(te.executedScripts))
+	}
+}
+
+func TestRunPerTickCloseTabs_FiresOnAlreadyBlockedDomain(t *testing.T) {
+	// Regression for issue #81: a domain that was blocked on a previous tick
+	// (i.e., no transition this tick) must still trigger the close path when a
+	// matching tab is open.
+	te := withTestExecutor(t)
+
+	cfg := config.Config{Groups: map[string][]string{"social": {"facebook.com"}}}
+	blocked := map[string]bool{"facebook.com": true}
+
+	runPerTickCloseTabs(blocked, cfg, func([]string) []string {
+		return []string{"facebook.com"}
+	})
+
+	if len(te.executedScripts) != 1 {
+		t.Fatalf("expected close script to fire even without transition, got %d scripts", len(te.executedScripts))
+	}
+}
+
 // ── Pomodoro override tests ───────────────────────────────────────────────────
 
 func pomodoroConfig() config.Config {
