@@ -112,89 +112,109 @@ func (g *MacOSAppleScriptGenerator) GenerateCloseTabsScript(domains []string) st
 		set domainsToBlock to %s
 		set closedCount to 0
 
-		if application "Google Chrome" is running then
-			tell application "Google Chrome"
-				set tabsToClose to {}
-				repeat with w in windows
-					repeat with t in tabs of w
-						set tabURL to URL of t
-						repeat with d in domainsToBlock
-							if tabURL contains d then
-								set end of tabsToClose to t
-								exit repeat
-							end if
+		try
+			if application "Google Chrome" is running then
+				tell application "Google Chrome"
+					set tabsToClose to {}
+					repeat with w in windows
+						repeat with t in tabs of w
+							set tabURL to URL of t
+							repeat with d in domainsToBlock
+								if tabURL contains d then
+									set end of tabsToClose to t
+									exit repeat
+								end if
+							end repeat
 						end repeat
 					end repeat
-				end repeat
-				set closedCount to closedCount + (count of tabsToClose)
-				repeat with t in tabsToClose
-					close t
-				end repeat
-			end tell
-		end if
+					set toCloseCount to count of tabsToClose
+					repeat with i from toCloseCount to 1 by -1
+						try
+							close item i of tabsToClose
+							set closedCount to closedCount + 1
+						end try
+					end repeat
+				end tell
+			end if
+		end try
 
-		if application "Safari" is running then
-			tell application "Safari"
-				set tabsToClose to {}
-				repeat with w in windows
-					repeat with t in tabs of w
-						set tabURL to URL of t
-						repeat with d in domainsToBlock
-							if tabURL contains d then
-								set end of tabsToClose to t
-								exit repeat
-							end if
+		try
+			if application "Safari" is running then
+				tell application "Safari"
+					set tabsToClose to {}
+					repeat with w in windows
+						repeat with t in tabs of w
+							set tabURL to URL of t
+							repeat with d in domainsToBlock
+								if tabURL contains d then
+									set end of tabsToClose to t
+									exit repeat
+								end if
+							end repeat
 						end repeat
 					end repeat
-				end repeat
-				set closedCount to closedCount + (count of tabsToClose)
-				repeat with t in tabsToClose
-					close t
-				end repeat
-			end tell
-		end if
+					set toCloseCount to count of tabsToClose
+					repeat with i from toCloseCount to 1 by -1
+						try
+							close item i of tabsToClose
+							set closedCount to closedCount + 1
+						end try
+					end repeat
+				end tell
+			end if
+		end try
 
-		if application "Arc" is running then
-			tell application "Arc"
-				set tabsToClose to {}
-				repeat with w in windows
-					repeat with t in tabs of w
-						set tabURL to URL of t
-						repeat with d in domainsToBlock
-							if tabURL contains d then
-								set end of tabsToClose to t
-								exit repeat
-							end if
+		try
+			if application "Arc" is running then
+				tell application "Arc"
+					set tabsToClose to {}
+					repeat with w in windows
+						repeat with t in tabs of w
+							set tabURL to URL of t
+							repeat with d in domainsToBlock
+								if tabURL contains d then
+									set end of tabsToClose to t
+									exit repeat
+								end if
+							end repeat
 						end repeat
 					end repeat
-				end repeat
-				set closedCount to closedCount + (count of tabsToClose)
-				repeat with t in tabsToClose
-					close t
-				end repeat
-			end tell
-		end if
+					set toCloseCount to count of tabsToClose
+					repeat with i from toCloseCount to 1 by -1
+						try
+							close item i of tabsToClose
+							set closedCount to closedCount + 1
+						end try
+					end repeat
+				end tell
+			end if
+		end try
 
-		if application "Brave Browser" is running then
-			tell application "Brave Browser"
-				set tabsToClose to {}
-				repeat with w in windows
-					repeat with t in tabs of w
-						set tabURL to URL of t
-						repeat with d in domainsToBlock
-							if tabURL contains d then
-								set end of tabsToClose to t
-								exit repeat
-							end if
+		try
+			if application "Brave Browser" is running then
+				tell application "Brave Browser"
+					set tabsToClose to {}
+					repeat with w in windows
+						repeat with t in tabs of w
+							set tabURL to URL of t
+							repeat with d in domainsToBlock
+								if tabURL contains d then
+									set end of tabsToClose to t
+									exit repeat
+								end if
+							end repeat
 						end repeat
 					end repeat
-				end repeat
-				set closedCount to closedCount + (count of tabsToClose)
-				repeat with t in tabsToClose
-					close t
-				end repeat
-			end tell
-		end if
+					set toCloseCount to count of tabsToClose
+					repeat with i from toCloseCount to 1 by -1
+						try
+							close item i of tabsToClose
+							set closedCount to closedCount + 1
+						end try
+					end repeat
+				end tell
+			end if
+		end try
 
 		if closedCount > 0 then
 			display notification %s with title "Sentinel" subtitle "Tab Closed"
@@ -630,6 +650,44 @@ func runAsMacUser(scriptContent string) error {
 	return nil
 }
 
+// runOsaScriptCapture runs an AppleScript via osascript and returns stdout. It
+// uses the same root → console-user shell-out as runAsMacUser: when the daemon
+// is launchd-managed and running as root, the script is dispatched via
+// `su - <console user> -c osascript ...` so it inherits a GUI session and can
+// talk to Chrome / Safari / Arc / Brave. Without this, root-context osascript
+// calls return exit 1 with no GUI session attached and probing for open tabs
+// silently fails (regression behind issue #81's per-tick close path).
+//
+// Uses a separate tmpfile from runAsMacUser so concurrent close + probe paths
+// in the same tick can't clobber each other's script content.
+func runOsaScriptCapture(scriptContent string) (string, error) {
+	if runtime.GOOS != "darwin" {
+		return "", nil
+	}
+
+	scriptPath := "/tmp/df_probe.scpt"
+	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0644); err != nil {
+		return "", fmt.Errorf("write script: %w", err)
+	}
+
+	user := getMacUser()
+	var cmd *exec.Cmd
+	if user == "" || os.Getuid() != 0 {
+		cmd = exec.Command("osascript", scriptPath)
+	} else {
+		cmd = exec.Command("su", "-", user, "-c", "osascript "+scriptPath)
+	}
+
+	out, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return "", fmt.Errorf("osascript exit %d: %s", exitErr.ExitCode(), strings.TrimSpace(string(exitErr.Stderr)))
+		}
+		return "", fmt.Errorf("osascript: %w", err)
+	}
+	return string(out), nil
+}
+
 func getOpenBrowserDomains(domains []string) []string {
 	if runtime.GOOS != "darwin" || len(domains) == 0 {
 		return nil
@@ -645,73 +703,81 @@ func getOpenBrowserDomains(domains []string) []string {
 		set domainsToCheck to %s
 		set matchedDomains to {}
 
-		if application "Google Chrome" is running then
-			tell application "Google Chrome"
-				repeat with w in windows
-					repeat with t in tabs of w
-						set tabURL to URL of t
-						repeat with d in domainsToCheck
-							if tabURL contains d then
-								if matchedDomains does not contain d then
-									set end of matchedDomains to d
+		try
+			if application "Google Chrome" is running then
+				tell application "Google Chrome"
+					repeat with w in windows
+						repeat with t in tabs of w
+							set tabURL to URL of t
+							repeat with d in domainsToCheck
+								if tabURL contains d then
+									if matchedDomains does not contain d then
+										set end of matchedDomains to d
+									end if
 								end if
-							end if
+							end repeat
 						end repeat
 					end repeat
-				end repeat
-			end tell
-		end if
+				end tell
+			end if
+		end try
 
-		if application "Safari" is running then
-			tell application "Safari"
-				repeat with w in windows
-					repeat with t in tabs of w
-						set tabURL to URL of t
-						repeat with d in domainsToCheck
-							if tabURL contains d then
-								if matchedDomains does not contain d then
-									set end of matchedDomains to d
+		try
+			if application "Safari" is running then
+				tell application "Safari"
+					repeat with w in windows
+						repeat with t in tabs of w
+							set tabURL to URL of t
+							repeat with d in domainsToCheck
+								if tabURL contains d then
+									if matchedDomains does not contain d then
+										set end of matchedDomains to d
+									end if
 								end if
-							end if
+							end repeat
 						end repeat
 					end repeat
-				end repeat
-			end tell
-		end if
+				end tell
+			end if
+		end try
 
-		if application "Arc" is running then
-			tell application "Arc"
-				repeat with w in windows
-					repeat with t in tabs of w
-						set tabURL to URL of t
-						repeat with d in domainsToCheck
-							if tabURL contains d then
-								if matchedDomains does not contain d then
-									set end of matchedDomains to d
+		try
+			if application "Arc" is running then
+				tell application "Arc"
+					repeat with w in windows
+						repeat with t in tabs of w
+							set tabURL to URL of t
+							repeat with d in domainsToCheck
+								if tabURL contains d then
+									if matchedDomains does not contain d then
+										set end of matchedDomains to d
+									end if
 								end if
-							end if
+							end repeat
 						end repeat
 					end repeat
-				end repeat
-			end tell
-		end if
+				end tell
+			end if
+		end try
 
-		if application "Brave Browser" is running then
-			tell application "Brave Browser"
-				repeat with w in windows
-					repeat with t in tabs of w
-						set tabURL to URL of t
-						repeat with d in domainsToCheck
-							if tabURL contains d then
-								if matchedDomains does not contain d then
-									set end of matchedDomains to d
+		try
+			if application "Brave Browser" is running then
+				tell application "Brave Browser"
+					repeat with w in windows
+						repeat with t in tabs of w
+							set tabURL to URL of t
+							repeat with d in domainsToCheck
+								if tabURL contains d then
+									if matchedDomains does not contain d then
+										set end of matchedDomains to d
+									end if
 								end if
-							end if
+							end repeat
 						end repeat
 					end repeat
-				end repeat
-			end tell
-		end if
+				end tell
+			end if
+		end try
 
 		if matchedDomains is {} then
 			return ""
@@ -727,13 +793,13 @@ func getOpenBrowserDomains(domains []string) []string {
 		end if
 	`, domainListStr)
 
-	out, err := exec.Command("osascript", "-e", script).Output()
+	out, err := runOsaScriptCapture(script)
 	if err != nil {
 		log.Printf("Error checking open browser domains: %v", err)
 		return nil
 	}
 
-	result := strings.TrimSpace(string(out))
+	result := strings.TrimSpace(out)
 	if result == "" {
 		return nil
 	}

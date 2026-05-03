@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -674,6 +675,72 @@ func TestGenerateCloseTabsScript_IncludesArcAndBrave(t *testing.T) {
 		if !strings.Contains(script, app) {
 			t.Errorf("GenerateCloseTabsScript: expected block for %q but not found in script", app)
 		}
+	}
+}
+
+func TestGenerateCloseTabsScript_WrapsEachBrowserInTryBlock(t *testing.T) {
+	// Regression for the -600 "Application isn't running" error when Safari (or
+	// any other browser) is closed but `application "X" is running` returns a
+	// stale true via Launch Services. Without the try wrapper, a single dead
+	// browser would crash the whole probe and prevent us from closing tabs in
+	// the browsers that ARE running.
+	g := &MacOSAppleScriptGenerator{}
+	script := g.GenerateCloseTabsScript([]string{"facebook.com"})
+
+	tries := strings.Count(script, "try")
+	endTries := strings.Count(script, "end try")
+	if tries < 4 || endTries < 4 {
+		t.Errorf("expected >=4 try/end try blocks (one per browser), got try=%d end_try=%d", tries, endTries)
+	}
+}
+
+func TestGenerateCloseTabsScript_ClosesCollectedTabsInReverse(t *testing.T) {
+	// Regression for: forward-order close walked specifiers like `tab 1, tab 2,
+	// tab 3 of window 1`. Closing tab 1 shifts the indices, so closing "tab 2"
+	// next actually closed the original tab 3, and closing "tab 3" failed
+	// because the index no longer existed. Net effect: only some matching tabs
+	// closed per tick, and the wrong ones at that.
+	//
+	// Fix: collect specifiers via the dictionary-independent generic form
+	// (`repeat with t in tabs of w` — works even when an app like Arc/Brave
+	// isn't installed locally and AppleScript can't load its scripting
+	// dictionary), then close in REVERSE of the collected list. Highest tab
+	// index closes first, so the indices of remaining specifiers don't shift.
+	g := &MacOSAppleScriptGenerator{}
+	script := g.GenerateCloseTabsScript([]string{"facebook.com"})
+
+	if !strings.Contains(script, "repeat with i from toCloseCount to 1 by -1") {
+		t.Error("expected close script to walk collected tabs in reverse (`repeat with i from toCloseCount to 1 by -1`)")
+	}
+	if !strings.Contains(script, "close item i of tabsToClose") {
+		t.Error("expected close script to close via positional list access, not stored specifier iteration")
+	}
+	// The old forward-iteration close that caused the index-shift bug must be gone.
+	if strings.Contains(script, "repeat with t in tabsToClose") {
+		t.Error("close script still uses forward `repeat with t in tabsToClose` (the buggy pattern); should iterate in reverse via index")
+	}
+	// Stays dictionary-independent — no explicit indexed `tab N of window M`
+	// access (would fail to compile if Arc/Brave isn't installed locally).
+	if strings.Contains(script, "tab tIdx of window wIdx") {
+		t.Error("close script uses explicit indexed tab access; this requires the app's AppleScript dictionary and breaks compilation when the browser isn't installed")
+	}
+}
+
+func TestRunOsaScriptCapture_NonDarwinIsNoOp(t *testing.T) {
+	// On non-darwin (CI is Linux) the helper must return ("", nil) without
+	// trying to write or fork osascript. Regression guard for the bug where
+	// getOpenBrowserDomains called exec.Command("osascript", ...) directly,
+	// which on Linux would fail and on macOS root would silently break the
+	// per-tick close path.
+	if runtime.GOOS == "darwin" {
+		t.Skip("non-darwin behavior; skipping on macOS")
+	}
+	out, err := runOsaScriptCapture(`tell application "Google Chrome" to count windows`)
+	if err != nil {
+		t.Errorf("expected nil error on non-darwin, got %v", err)
+	}
+	if out != "" {
+		t.Errorf("expected empty output on non-darwin, got %q", out)
 	}
 }
 
