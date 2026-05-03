@@ -452,3 +452,88 @@ Documented the Safari limitation as a coverage table in `TROUBLESHOOTING.md §4 
 CI failed once on the initial push with a parallel-test flake in `internal/testcli` (testcli and web both mutate `./config.json` with `UseLocalConfig = true`; race produces `unexpected end of JSON input`). Reproduced as a known issue independent of this change — a rerun passed cleanly. Worth flagging as a separate cleanup later: serialise the test packages that touch `./config.json`, or stop using the live config file for tests.
 
 **Wrap-up:** PR #84 merged into main, release v0.1.15 live at https://github.com/vsangava/sentinel/releases/tag/v0.1.15. The macOS tab closer is now the genuine OS-level backstop for whatever bypasses get past DNS / pf — at least for any tab that isn't in Safari Private Browsing.
+
+---
+
+## May 3 — Per-tick tab closer fixes (round 2) → v0.1.16
+**Session ID:** `streamed-firefly` (continued) · **PR:** #86 · **Release:** v0.1.16
+
+**Opening prompt:**
+> "I currently have both facebook.com and tiktok.com open in browser window. strict mode is on and running the latest version. why are the tabs not closing? Is there a bug in the applescript? How do we check?"
+
+**What happened:**
+
+v0.1.15 shipped the per-tick scaffolding and *all the tests passed*, but in production every tick failed silently end to end. The fix took **three iterations**, each of which unmasked the next layer of bug. This entry captures all three because the iteration sequence is the lesson — the tests we shipped in v0.1.15 covered the per-tick driver and the script generator independently, but never exercised the actual osascript fork against real browsers, which is where every one of these bugs lived.
+
+### Iteration 1 — probe was running as root
+
+Daemon logs showed every tick:
+```
+2026/05/03 12:10:44 Error checking open browser domains: exit status 1
+```
+
+Traced to `getOpenBrowserDomains` in `internal/scheduler/scheduler.go` calling `exec.Command("osascript", "-e", script).Output()` directly. The daemon runs as root under launchd; root has no GUI session attached to Chrome / Safari / Arc / Brave, so AppleScript exited 1 every time. The new per-tick close path was gated on this probe → probe always returned empty → close never fired.
+
+`runAsMacUser` (already in the codebase, used by the *close* script) handles this correctly via `su - <console user> -c osascript ...` when running as root. But it returns only error/no-error, no stdout. The probe needs stdout to parse the matched-domain list.
+
+**Fix:** new `runOsaScriptCapture(script string) (string, error)` helper mirroring `runAsMacUser`'s root → console-user shell-out and capturing stdout. Uses a separate tmpfile (`/tmp/df_probe.scpt`) so probe and close calls within a single tick don't clobber each other. Side benefit: the 3-minute pre-block warning, which uses the same probe, has been silently broken under launchd for as long as the warning has existed — fixed as a side effect.
+
+### Iteration 2 — `is running` returned stale true, Safari errored with -600
+
+After iteration 1, the probe was reaching the browsers, but every tick logged:
+```
+osascript exit 1: /tmp/df_probe.scpt:990:1320: execution error: Safari got an error: Application isn't running. (-600)
+```
+
+Even when Safari was closed. `if application "Safari" is running` returns a stale `true` via Launch Services when Safari has been launched in the user's session but isn't currently running (process gone, registry not cleared). The inner `tell application "Safari"` then errored with -600. With four browser blocks chained, one bad browser killed the whole probe.
+
+Reproduced empirically with a minimal AppleScript: without `try`, Safari's stale-true case exits 1; with `try ... end try` wrap, exits 0. Applied the wrap to **each browser block** in both the probe and close scripts.
+
+### Iteration 3a — full reverse iteration (broken: only worked when all four browsers installed)
+
+After iterations 1 and 2, with two windows × three matching tabs each, only 1–2 tabs closed per tick — and inconsistently. Diagnosis: the close phase iterated `tabsToClose` forward; each entry is a specifier like `tab 2 of window 1` resolved at close time. After `close tab 1 of window 1`, `tab 2` now points to what was tab 3. Forward iteration over a mutating tab list closes the wrong tabs and skips the rest.
+
+First attempt: rewrite as full reverse iteration with explicit indexed access (`tab tIdx of window wIdx`). All tests passed locally. Then in production:
+```
+osascript exit 1: /tmp/df_script.scpt:1668:1672: script error: Expected end of line but found identifier. (-2741)
+```
+
+Whole-script compile failure — Chrome and Safari blocks didn't run either. Empirically isolated: `tab tIdx of window wIdx` requires the app's AppleScript dictionary to be loaded at compile time. The user's machine doesn't have Arc or Brave installed (common — most folks have one Chromium browser, not three), so the parser couldn't resolve the indexed-tab syntax. The previous forward-iter syntax (`repeat with t in tabs of w` / `URL of t`) compiles fine without the dictionary because it uses generic terminology.
+
+### Iteration 3b — collected list, closed in reverse (final fix)
+
+Keep the dictionary-independent forward collection, walk the collected list in reverse at close time:
+```applescript
+set tabsToClose to {}
+repeat with w in windows
+    repeat with t in tabs of w
+        ... if match: set end of tabsToClose to t
+    end repeat
+end repeat
+set toCloseCount to count of tabsToClose
+repeat with i from toCloseCount to 1 by -1
+    try
+        close item i of tabsToClose
+        set closedCount to closedCount + 1
+    end try
+end repeat
+```
+
+`tabs of w` returns specifiers in index-ascending order, so the collected list is index-ascending per window. Walking it in reverse means the highest-index tab closes first, and lower-index specifiers in the list don't shift out from under us. Per-close `try` handles the case where closing the last matching tab in a window also closes the window (subsequent references would error — caught and skipped).
+
+### Tests
+
+Three new regression tests, each guarding the trap that bit us:
+
+- `TestRunOsaScriptCapture_NonDarwinIsNoOp` — guards the no-fork path on Linux CI.
+- `TestGenerateCloseTabsScript_WrapsEachBrowserInTryBlock` — asserts ≥4 `try`/`end try` pairs.
+- `TestGenerateCloseTabsScript_ClosesCollectedTabsInReverse` — asserts the reverse close-loop syntax, AND explicitly **forbids** both the buggy forward iteration AND the dictionary-dependent `tab tIdx of window wIdx` form. Catches both regression directions: someone reverting to forward iteration, or someone "cleaning up" to indexed access that breaks on machines without all four browsers installed.
+
+### Lessons
+
+1. **Unit tests of the per-tick driver and the script generator are not the same as testing the actual osascript fork against real browsers.** All three bugs lived in the gap. Worth thinking about how to add an integration smoke test that runs the generated script through `osacompile` (compile-only, no exec) at minimum — would have caught iteration 3a. Cheap to add; flagged for a follow-up.
+2. **AppleScript's behaviour depends on which app dictionaries are installed locally.** "It compiles on my machine" means nothing if the script targets browsers the user doesn't have. Generic-terminology syntax (`repeat with t in tabs of w`) is the dictionary-independent path; explicit indexed access (`tab N of window M`) requires the dictionary.
+3. **`is running` is unreliable.** Launch Services can return stale `true`. `try ... end try` around each browser block is the cheapest defensive pattern; switching to System Events process probe (`tell application "System Events" to (exists process "X")`) is the more authoritative alternative but adds an Automation permission requirement.
+4. **`runAsMacUser` was already in the codebase**, but the probe path skipped it. The 3-minute warning has been broken under launchd as long as it's existed — nobody noticed because warnings are subtle. Worth auditing for other osascript call sites that should be going through the helper.
+
+**Wrap-up:** PR #86 merged into main, release v0.1.16 live at https://github.com/vsangava/sentinel/releases/tag/v0.1.16. User confirmed live behaviour: tabs in two windows × three tabs each all close correctly within 60 s. The per-tick close path is now genuinely working — three iterations later than v0.1.15 implied.
