@@ -3,10 +3,10 @@ package web
 import (
 	"bytes"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -14,23 +14,19 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	// Use local config so tests don't attempt to create/read the system config
-	// directory (/Library/Application Support/Sentinel on macOS), which requires
-	// root and fails in CI runners.
-	config.UseLocalConfig = true
-	dir, _ := os.Getwd()
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			os.Chdir(dir) //nolint:errcheck
-			break
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
+	// Point config I/O at a tempdir. Several handlers under test (Pomodoro,
+	// Pause) call config.SaveConfig, which would otherwise rewrite the
+	// repo-rooted ./config.json with json.MarshalIndent — alphabetizing
+	// weekday keys and expanding inline arrays — and race with the testcli
+	// package when go test ./... runs them in parallel.
+	dir, err := os.MkdirTemp("", "sentinel-web-*")
+	if err != nil {
+		log.Fatalf("could not create temp config dir: %v", err)
 	}
-	os.Exit(m.Run())
+	config.ConfigDirOverride = dir
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
 }
 
 func TestConfigHandler_ReturnsJSON(t *testing.T) {

@@ -1,8 +1,8 @@
 package testcli
 
 import (
+	"log"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -11,21 +11,20 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	// go test sets CWD to the package directory; walk up to the module root
-	// so UseLocalConfig=true finds ./config.json in the right place.
-	dir, _ := os.Getwd()
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			os.Chdir(dir)
-			break
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
+	// Point config I/O at a tempdir so the test run doesn't read or write
+	// the repo-rooted ./config.json. Without this, LoadConfig + SaveConfig
+	// (e.g. via the Pomodoro/Pause handlers under test) would re-marshal
+	// the on-disk file — alphabetizing weekday keys, expanding inline
+	// arrays — and the testcli + web packages would race when go test ./...
+	// runs them in parallel.
+	dir, err := os.MkdirTemp("", "sentinel-testcli-*")
+	if err != nil {
+		log.Fatalf("could not create temp config dir: %v", err)
 	}
-	os.Exit(m.Run())
+	config.ConfigDirOverride = dir
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
 }
 
 func TestQueryBlocking_ValidTimeFormat(t *testing.T) {
