@@ -218,6 +218,36 @@ func RemoveConfigDir(yes bool) Step {
 	return Step{Label: "Remove config directory", Status: StatusDone}
 }
 
+// installedBinaryPath is the path that `setup` copies the binary to on macOS.
+// Exposed as a package-private var so tests can substitute a tempdir path.
+var installedBinaryPath = "/usr/local/bin/sentinel"
+
+// RemoveInstalledBinary removes the installed sentinel binary at /usr/local/bin/sentinel
+// (macOS only). This is the binary that `setup` copies in. Without this, a user who
+// runs `clean` and then `setup` again gets "Sentinel is already installed" because the
+// stale binary is still on disk even though the service is gone.
+//
+// On Unix, unlink succeeds even if the binary is currently executing — including the
+// case where the running process *is* /usr/local/bin/sentinel — because the kernel
+// keeps the inode alive until the last open reference is dropped.
+func RemoveInstalledBinary() Step {
+	if runtime.GOOS != "darwin" {
+		return Step{Label: "Remove installed binary", Status: StatusSkipped, Detail: "not applicable on " + runtime.GOOS}
+	}
+	return removeBinary(installedBinaryPath)
+}
+
+func removeBinary(path string) Step {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return Step{Label: "Remove installed binary", Status: StatusSkipped, Detail: "not installed at " + path}
+	}
+	fmt.Printf(" $ rm -f %s\n", path)
+	if err := os.Remove(path); err != nil {
+		return Step{Label: "Remove installed binary", Status: StatusWarn, Detail: err.Error()}
+	}
+	return Step{Label: "Remove installed binary", Status: StatusDone, Detail: path}
+}
+
 // RemoveTempFiles removes known temporary files created by the daemon.
 func RemoveTempFiles() Step {
 	candidates := []string{"/tmp/df_script.scpt"}

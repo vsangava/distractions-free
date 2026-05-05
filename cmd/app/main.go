@@ -173,11 +173,19 @@ func runSetup() {
 		log.Fatalf("setup: could not create service handle: %v", err)
 	}
 
+	// setup is idempotent: re-running it on an existing installation should
+	// produce a working installation, not abort. The previous behaviour
+	// (refuse if /usr/local/bin/sentinel exists) made `clean && setup`
+	// dependent on `clean` having already removed the binary — which older
+	// builds did not do — and left users stuck without a manual `rm`.
+	// Order: stop + uninstall any existing service registration (so kardianos
+	// install doesn't trip on a duplicate plist), then overwrite the binary,
+	// then install + start fresh.
+	_ = service.Control(s, "stop")      // best-effort; not running is fine
+	_ = service.Control(s, "uninstall") // best-effort; not registered is fine
+
 	if runtime.GOOS == "darwin" {
 		dest := "/usr/local/bin/sentinel"
-		if _, err := os.Stat(dest); err == nil {
-			log.Fatalf("Sentinel is already installed at %s. Run 'sudo sentinel clean' to remove it first.", dest)
-		}
 		src, err := os.Executable()
 		if err != nil {
 			log.Fatalf("setup: could not resolve binary path: %v", err)
@@ -189,6 +197,10 @@ func runSetup() {
 		if err := os.MkdirAll("/usr/local/bin", 0755); err != nil {
 			log.Fatalf("setup: could not create /usr/local/bin: %v", err)
 		}
+		// Remove first so we don't write through any open file descriptors held
+		// by a previous service process; the kernel keeps the old inode alive
+		// for already-running readers, while new launchd loads see fresh bytes.
+		_ = os.Remove(dest)
 		if err := os.WriteFile(dest, data, 0755); err != nil {
 			log.Fatalf("setup: could not write binary to %s: %v", dest, err)
 		}
@@ -265,10 +277,14 @@ func runClean(yes bool) {
 	// Step 7 — Remove config directory.
 	addStep(cleanup.RemoveConfigDir(yes))
 
-	// Step 8 — Remove temp files.
+	// Step 8 — Remove the binary that setup installed at /usr/local/bin/sentinel
+	// (macOS only). Without this, a follow-up `setup` aborts with "already installed".
+	addStep(cleanup.RemoveInstalledBinary())
+
+	// Step 9 — Remove temp files.
 	addStep(cleanup.RemoveTempFiles())
 
-	// Step 9 — Verify port 53 is free.
+	// Step 10 — Verify port 53 is free.
 	addStep(cleanup.CheckPort53())
 
 	// Print summary.
