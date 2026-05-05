@@ -104,25 +104,40 @@ var (
 	AppConfig      Config
 	mu             sync.RWMutex
 	UseLocalConfig bool
+	// ConfigDirOverride, if non-empty, takes precedence over UseLocalConfig and
+	// the OS-specific defaults. Used by tests to point config I/O at a tempdir
+	// so parallel test packages don't race on the repo-rooted ./config.json
+	// (and don't reformat it as a side effect).
+	ConfigDirOverride string
 )
 
 func GetConfigFilePath() (string, error) {
-	var dir string
-	if UseLocalConfig {
-		dir = "."
-	} else if runtime.GOOS == "darwin" {
-		dir = "/Library/Application Support/Sentinel"
-	} else if runtime.GOOS == "windows" {
-		dir = filepath.Join(os.Getenv("PROGRAMDATA"), "Sentinel")
-	} else {
-		dir = "/etc/sentinel"
-	}
+	dir := configDir()
 	if dir != "." {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return "", err
 		}
 	}
 	return filepath.Join(dir, "config.json"), nil
+}
+
+// configDir resolves the directory that should hold config.json.
+// Precedence: explicit override > local mode > OS default.
+func configDir() string {
+	if ConfigDirOverride != "" {
+		return ConfigDirOverride
+	}
+	if UseLocalConfig {
+		return "."
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		return "/Library/Application Support/Sentinel"
+	case "windows":
+		return filepath.Join(os.Getenv("PROGRAMDATA"), "Sentinel")
+	default:
+		return "/etc/sentinel"
+	}
 }
 
 func generateToken() (string, error) {
@@ -291,15 +306,5 @@ func AutoSetPrimaryDNS(server string) {
 
 // ConfigDir returns the OS-specific config directory path without creating it.
 func ConfigDir() string {
-	if UseLocalConfig {
-		return "."
-	}
-	switch runtime.GOOS {
-	case "darwin":
-		return "/Library/Application Support/Sentinel"
-	case "windows":
-		return filepath.Join(os.Getenv("PROGRAMDATA"), "Sentinel")
-	default:
-		return "/etc/sentinel"
-	}
+	return configDir()
 }
