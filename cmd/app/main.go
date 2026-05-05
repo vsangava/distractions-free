@@ -265,10 +265,14 @@ func runClean(yes bool) {
 	// Step 7 — Remove config directory.
 	addStep(cleanup.RemoveConfigDir(yes))
 
-	// Step 8 — Remove temp files.
+	// Step 8 — Remove the binary that setup installed at /usr/local/bin/sentinel
+	// (macOS only). Without this, a follow-up `setup` aborts with "already installed".
+	addStep(cleanup.RemoveInstalledBinary())
+
+	// Step 9 — Remove temp files.
 	addStep(cleanup.RemoveTempFiles())
 
-	// Step 9 — Verify port 53 is free.
+	// Step 10 — Verify port 53 is free.
 	addStep(cleanup.CheckPort53())
 
 	// Print summary.
