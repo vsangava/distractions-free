@@ -32,6 +32,10 @@ AdGuard Home is a solid network-wide DNS blocker, and Sentinel can run alongside
 
 AdGuard Home excels at network-wide content filtering — blocking ad trackers or adult content for every device on a home network. Sentinel is built for personal schedule enforcement on a single machine: granular enough to say "block Reddit 9–12 and 2–6, block gaming all evening, and leave streaming open on weekends." If you already run AdGuard Home, see [Running alongside AdGuard Home](TROUBLESHOOTING.md#running-sentinel-alongside-adguard-home-or-any-other-local-dns-service) to run both together.
 
+### Does Sentinel keep my laptop awake?
+
+No. The scheduler's 1-minute ticker is a regular Go timer — it doesn't issue power assertions and isn't visible to macOS as user activity. The launchd plist sets no `ProcessType: Interactive` or `KeepAlive`, and the DNS and web servers bind to `127.0.0.1` only, so they never initiate outbound network activity. Your Mac sleeps on its normal idle schedule; when it wakes, the ticker resumes and the next rule evaluation happens within ~60 s. To confirm: run `pmset -g assertions` while the daemon is active — Sentinel will not appear in the assertions list.
+
 ---
 
 <!-- Screenshot: dashboard Status tab — coming soon -->

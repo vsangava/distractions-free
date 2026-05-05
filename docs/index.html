@@ -567,6 +567,10 @@
           {
             q: `How do I uninstall?`,
             a: `Run sudo sentinel clean. It stops the service, removes all hosts entries, clears DNS and pf rules, unregisters the service, and optionally deletes the config directory. Leaves your machine exactly as it was before installation.`
+          },
+          {
+            q: `Does Sentinel keep my laptop awake?`,
+            a: `No. The 1-minute scheduler tick is a regular Go timer — it doesn't issue power assertions and macOS doesn't see it as user activity. The launchd plist sets no ProcessType: Interactive or KeepAlive, and the DNS and web servers bind to 127.0.0.1 only. Your Mac sleeps on its normal idle schedule; when it wakes, the next rule evaluation happens within ~60 s. Confirm with: pmset -g assertions — Sentinel will not appear in the list.`
           }
         ]" :key="i">
           <div class="bg-[#161616] border border-slate-800 rounded-2xl overflow-hidden">
