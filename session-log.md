@@ -537,3 +537,41 @@ Three new regression tests, each guarding the trap that bit us:
 4. **`runAsMacUser` was already in the codebase**, but the probe path skipped it. The 3-minute warning has been broken under launchd as long as it's existed — nobody noticed because warnings are subtle. Worth auditing for other osascript call sites that should be going through the helper.
 
 **Wrap-up:** PR #86 merged into main, release v0.1.16 live at https://github.com/vsangava/sentinel/releases/tag/v0.1.16. User confirmed live behaviour: tabs in two windows × three tabs each all close correctly within 60 s. The per-tick close path is now genuinely working — three iterations later than v0.1.15 implied.
+
+---
+
+## May 4 — `setup`/`clean` idempotency + test config isolation → v0.1.17
+**Session ID:** `cda47b91` · **PRs:** #87, #88 · **Release:** v0.1.17
+
+**Opening prompt:**
+> "fix issues 79 and 85."
+
+**What happened:**
+
+Two unrelated bugs cleaned up in one session.
+
+### Issue #85 — `setup` wedged in a self-contradictory loop
+
+`sudo sentinel setup` aborted with `Sentinel is already installed at /usr/local/bin/sentinel. Run 'sudo sentinel clean' to remove it first` even when the user *had* run `clean`. Looking at `cmd/app/main.go:runClean`, the cleanup pipeline removed the launchd plist, the config dir, /etc/hosts entries, the pf anchor — but never the binary at `/usr/local/bin/sentinel`. Setup's existence guard then refused to proceed. Users were stuck unable to upgrade or recover without a manual `sudo rm`.
+
+Initial fix added `cleanup.RemoveInstalledBinary()` as step 8 of the clean pipeline. Path captured in a package-private var so unit tests can substitute a tempdir. Before claiming done I wanted to convince myself the unlink was safe even when the cleaning process is itself `/usr/local/bin/sentinel` — wrote a tiny standalone Go program that `os.Remove`'d its own executable while running, confirmed the dirent went immediately, the kernel kept the inode alive for the running image, and the process exited cleanly.
+
+**User pushback (the productive kind):** *"you tested a regular executable, but ours is a service installed. both are not same.. can you confirm?"* Fair point — the standalone test didn't exercise the launchd-managed daemon scenario. Wrote a more realistic test: built a tiny Go daemon, installed it as a real LaunchAgent with `KeepAlive=true`, watched it tick under `launchctl list`, then ran the cleaner sequence — `launchctl bootout` → plist removal → unlink the running binary — and confirmed launchd did NOT respawn 2 s later. The order of operations matters: by the time we unlink, the plist is gone, so `KeepAlive` has nothing to act on.
+
+Then the user came back with: *"sudo sentinel clean && sudo sentinel setup failing with ... already installed"*. Checked `/usr/local/bin/sentinel` — dated April 30, predating today's fix. Of course: the *installed* binary still had the old `clean` code, so `clean` left the binary in place and the next `setup` (also old code) tripped the guard. Chicken-and-egg. The fix was correct but the user couldn't bootstrap into it.
+
+Resolved with a second commit: made `setup` idempotent. Removed the "already installed" guard entirely. Setup now best-effort stops + uninstalls any existing service registration (so kardianos's install step doesn't trip on a duplicate plist), unlinks the old binary, writes the new one, and re-registers + starts. Re-running `setup` over an existing install just produces a working install — `clean` is no longer load-bearing for upgrades. Even users on v0.1.16 or earlier can now run `sudo ./sentinel setup` straight onto an existing install with the new binary; no manual `rm`, no `clean` required.
+
+### Issue #79 — tests reformatting the checked-in config.json
+
+The `testcli` and `web` test packages set `config.UseLocalConfig = true` and chdir'd up to the module root so `LoadConfig`/`SaveConfig` would hit `./config.json`. Two failure modes: (1) handlers under test (Pomodoro, Pause) call `config.SaveConfig`, which re-marshals with `json.MarshalIndent` — Go alphabetizes map keys, so `Monday → Sunday` becomes `Friday → Wednesday`, and the inline `[{...}]` arrays in the source file get exploded into multi-line objects on every test run. (2) Both packages wrote to the same `./config.json`, racing under `go test ./...`'s default parallel execution.
+
+Fixed with `config.ConfigDirOverride` — a string that takes precedence over `UseLocalConfig` and the OS-specific defaults when non-empty. Each `TestMain` mints its own tempdir via `os.MkdirTemp` and points the override at it. `LoadConfig` falls back to writing the embedded `default_config.json` when the tempdir is empty, so tests still get a valid config. Verified with `go test -count=3 -p 8` that `git diff config.json` stays empty across repeated parallel runs.
+
+### Lessons
+
+1. **"Self-deletion works on macOS" generalises across process types.** Whether the running binary is a standalone CLI or a launchd-managed daemon, `unlink(2)` is filesystem-level and doesn't care. What changes between scenarios is the *respawn risk*, not the unlink semantics — and the order of operations (stop daemon → uninstall plist → unlink) is what controls respawn risk. The user was right to push back, and the more realistic test made the answer more durable.
+2. **Idempotency beats guard checks.** The "already installed" guard in `setup` was defensive but counterproductive: it punted to `clean`, which (in old builds) didn't actually remove the binary. Idempotent `setup` removes the dependency on `clean` having particular behaviour. Same lesson would apply to any other "is the system already in state X?" check that errors out instead of converging — convergence is almost always a better default.
+3. **Tests touching shared, checked-in files leak**. `UseLocalConfig` was a quick way to keep tests off the system config dir, but it just shifted the problem to a different shared file. Per-test or per-package tempdirs are the actually-isolated answer; an explicit override variable is enough to retrofit it without a big test-rewrite.
+
+**Wrap-up:** PR #87 (issue #85, two commits: `clean` removes binary + `setup` idempotency) and PR #88 (issue #79, test isolation) merged into main. Release v0.1.17 live at https://github.com/vsangava/sentinel/releases/tag/v0.1.17. The release workflow's first run hit a transient `proxy.golang.org` networking failure on the macos-latest runner; re-running succeeded in 1m20s.
