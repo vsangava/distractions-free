@@ -600,3 +600,45 @@ Asked the user to confirm what deliverable they wanted (docs vs. code change vs.
 **Lesson:** The temptation on an `explore:` issue is to skip the investigation and write a long doc. Better order: investigate first, scope the deliverable to the smallest thing that actually answers the question, only then write. The investigation-first step also caught that the codebase has grown beyond what `CLAUDE.md` describes (`enforcer`, `pf`, `cleanup` packages weren't in the architecture overview) — worth keeping in mind when working from project docs alone.
 
 **Wrap-up:** PR #89 merged into main, issue #72 closed. No release cut — pure docs change.
+
+---
+
+## May 5 — Comprehensive DoH coverage docs (issue #82)
+**Session ID:** `docs-issue-82-doh` · **PR:** TBD
+
+**Opening prompt:**
+> "continue what you were doing working on issue 82 as you finished 57. pick up from where you left off."
+
+**What happened:**
+
+Continuation session. Issue #57 (Pomodoro / focus sessions) shipped via PR #90 in the previous turn; this session was the docs sweep for issue #82, which asks: *"with recent changes that handle browser-DoH bypass, our product is now more effective than AdGuard Home — make sure that fact is reflected in the user-facing docs, the FAQ, the troubleshooting guide, and CLAUDE.md."*
+
+The underlying code work for DoH coverage was already merged in earlier PRs:
+- PR #78 — comprehensive CDN/asset coverage + opt-in `_doh` group.
+- PR #83 — port-restricted pf rules for the `_doh` group (TCP/443 + TCP+UDP/853) + strict-mode self-heal on mode downgrade.
+
+So this PR is purely docs catching up to what the code already does.
+
+### CLAUDE.md
+Architecture overview was stale (matched the codebase pre-`enforcer`/`pf`/`cleanup` packages — flagged in the previous session as worth fixing). Rewrote the "What this project does" intro to lead with the three enforcement modes and what each does. Updated the data-flow steps to mention the per-tick `pf.Refresh()` (CDN IP rotation), the per-tick AppleScript browser closer, and the new `_doh`-aware behaviour. Added rows to the package table for `internal/enforcer`, `internal/pf`, and `internal/cleanup`. Noted that strict mode is macOS-only and the factory falls back to dns mode on other OSes.
+
+### docs/index.html (landing page FAQ)
+Added a new FAQ accordion item: *"What about browsers using DNS-over-HTTPS (DoH or 'Secure DNS')?"* — walks through the three cases (default install, hosts mode, strict mode) and explains why each is covered. Updated the strict-mode card description to call out the `_doh` group explicitly. Added two rows to the AdGuard comparison table: *"Survives browser DNS-over-HTTPS (Secure DNS)"* and *"Kernel-level IP blocking (pf firewall)"* — both ✓ for Sentinel, ✗ for AdGuard. Updated the AdGuard intro paragraph to note the DoH advantage.
+
+### README.md
+Mirrored the landing-page FAQ entry, and added the same two AdGuard comparison rows so the README table matches what's on the site. The README's "Configuration" section already had a deep `_doh` group write-up from earlier work, so no further edits there.
+
+### TROUBLESHOOTING.md
+Already had a comprehensive *"Browser DNS-over-HTTPS (DoH) bypass"* section (added in PR #83). Two additions this round:
+1. **One-shot health check.** A copy-paste bash block under §4 → strict mode that runs every layer's check (service status, mode, sys DNS, dig, `pfctl -s info`, anchor presence, rule count, table dump, anchor file on disk, pf.conf injection, last-60s logs) in sequence. Lists the expected healthy output beneath the block so the reader can compare. Builds on what I'd been pasting into Claude Code while debugging strict-mode issues across PRs #78/#83/#86.
+2. **`_doh` always-on detail in the DoH section.** Added a verification command (`sudo pfctl -a sentinel -s rules | grep -E 'port = (443|853)'`) and the expected rule-set layout so users on strict mode can confirm the `_doh` rules actually loaded.
+
+### DESIGN.md
+Anchor-file model section was the most stale — said "single `<blocked_ips>` table" with one rule, but the current code generates a two-section anchor. Replaced that with the actual two-section layout (regular IPs all-port + DoH IPs port-restricted on TCP/443 and TCP+UDP/853) and explained the rationale: regular blocked IPs get all-port drops because there's no legitimate traffic to those CDNs; DoH endpoints get port-restricted drops so UDP/53 plain DNS to the same IPs (1.1.1.1, etc.) stays open for `backup_dns`. Updated the `ActivateBlock` description to match the current `ActivateBlockMixed` signature (`domains`, `dohDomains`, `primaryDNS`, `backupDNS`) and noted the deliberately-asymmetric state-kill behaviour: only regular block IPs get `pfctl -k`'d, DoH IPs are left alone to preserve the daemon's own backup-DNS sessions.
+
+### Lessons
+
+1. **Docs PRs that follow a code PR are easy to defer and easy to skip.** PR #78 added the `_doh` group, PR #83 made it port-restricted and always-on, PR #86 reorganised tab-closer behaviour around DoH-bypassed tabs — but the user-facing FAQ never said the word "DoH" until this PR. Worth flagging in a future workflow: when shipping a feature whose value only makes sense when the user *understands* an obscure threat model (DoH bypass), the doc update is part of the feature, not optional.
+2. **Docs drift from code shows up in the architecture sections first.** CLAUDE.md and DESIGN.md both still described the pre-multi-mode code layout. Worth a periodic `grep -L 'enforcer'` style audit against what actually exists in `internal/`.
+
+**Wrap-up:** PR opened with five files updated (CLAUDE.md, README.md, docs/index.html, TROUBLESHOOTING.md, DESIGN.md). Pure docs change — no release cut.
