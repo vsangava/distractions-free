@@ -284,6 +284,15 @@
           <p class="text-slate-400 text-sm leading-relaxed">Cap how long a group is accessible each day. Add <code class="text-sky-400 text-xs">daily_quota_minutes: 30</code> to any rule — once the allowance is consumed, the group blocks for the rest of the day. Requires DNS or strict mode.</p>
         </div>
 
+        <!-- Feature: Focus sessions / Pomodoro -->
+        <div class="bg-[#161616] border border-slate-800 rounded-2xl p-6 hover:border-sky-500/40 transition-colors">
+          <div class="w-10 h-10 rounded-xl bg-sky-500/10 flex items-center justify-center mb-4">
+            <svg class="w-5 h-5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          </div>
+          <h3 class="text-white font-semibold mb-2">Focus sessions (Pomodoro)</h3>
+          <p class="text-slate-400 text-sm leading-relaxed">Start a 25/5 work-and-break session from the dashboard. During work, every active rule is forced on regardless of schedule and pause is locked out. Notifications fire at each phase boundary.</p>
+        </div>
+
         <!-- Feature: Clean uninstall -->
         <div class="bg-[#161616] border border-slate-800 rounded-2xl p-6 hover:border-sky-500/40 transition-colors">
           <div class="w-10 h-10 rounded-xl bg-sky-500/10 flex items-center justify-center mb-4">
@@ -563,6 +572,10 @@
           {
             q: `Can I set a time allowance instead of a fixed block window?`,
             a: `Yes — add daily_quota_minutes to any rule. For example, "daily_quota_minutes": 30 gives you 30 minutes of access per day, whenever you want it. Once the allowance is consumed, the group blocks for the rest of the day and resets at midnight. Usage is measured from DNS activity, so background-active tabs (Reddit, YouTube) count toward the quota. Requires DNS or strict enforcement mode — hosts mode doesn't see DNS queries.`
+          },
+          {
+            q: `Is there a built-in Pomodoro / focus-session timer?`,
+            a: `Yes. Open the dashboard's Status tab, set a work and break duration (defaults 25 / 5 minutes; up to 120 / 60), and click Start Focus Session. During the work phase every active rule is forced on regardless of its schedule, and pause is locked out — you can't edit your way out until the work phase ends. Notifications fire at each phase boundary, the session survives sleep and daemon restart, and it clears itself when the break finishes. It's the inverse of pause: pause forces blocking off, focus sessions force blocking on.`
           },
           {
             q: `How do I uninstall?`,

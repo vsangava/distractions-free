@@ -51,6 +51,7 @@ No. The scheduler's 1-minute ticker is a regular Go timer — it doesn't issue p
 - [The web dashboard](#the-web-dashboard)
 - [Configuration](#configuration)
 - [Pause & resume](#pause--resume)
+- [Focus sessions (Pomodoro)](#focus-sessions-pomodoro)
 - [Enforcement modes](#enforcement-modes)
 - [Uninstall & cleanup](#uninstall--cleanup)
 - [Command-line reference](#command-line-reference)
@@ -285,6 +286,36 @@ curl -X DELETE http://localhost:8040/api/pause \
 ```
 
 The pause window is written to `config.json` as `pause.until` and cleared automatically when the time passes — no stale pauses left behind.
+
+---
+
+## Focus sessions (Pomodoro)
+
+A focus session is the inverse of pause: a fixed work interval where blocking is *forced on* regardless of your normal schedule, followed by a break interval where it's *released*. Open the dashboard's **Status** tab, set the work and break durations (defaults: 25 min / 5 min; allowed ranges 1–120 work, 1–60 break), and click **Start Focus Session**.
+
+**During the work phase** every active rule is treated as blocking right now, even rules whose schedule wouldn't fire at this time. The pause endpoint and the config-update endpoint both return `423 Locked` — you can't pause out, edit your way out, or stop the session early. When the work phase ends, a macOS notification fires and the daemon transitions automatically into the break phase.
+
+**During the break phase** all rules revert to their normal schedule (so most things are unblocked, unless your usual schedule blocks them anyway). A second notification fires when the break ends, and the session clears itself; sessions don't auto-restart.
+
+Via the API:
+
+```bash
+TOKEN=$(curl -s http://localhost:8040/api/config | jq -r '.settings.auth_token')
+
+# Start a 50-minute work / 10-minute break session
+curl -X POST http://localhost:8040/api/pomodoro/start \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"work_minutes": 50, "break_minutes": 10}'
+
+# Stop a session (only allowed during the break phase)
+curl -X DELETE http://localhost:8040/api/pomodoro \
+  -H "X-Auth-Token: $TOKEN"
+```
+
+Session state is persisted in `config.json` under the optional `pomodoro` field (`{phase, phase_ends_at, work_minutes, break_minutes}`). It survives daemon restart and laptop sleep — when the system wakes, the next scheduler tick (within ~60 s) re-evaluates the phase and transitions or clears as needed.
+
+> **Note:** the work-phase lock is an enforcement convenience, not a security boundary — anyone with admin access to your machine can still edit `config.json` directly to drop the session. The point is to add a couple of layers of friction during focused work.
 
 ---
 

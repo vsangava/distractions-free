@@ -230,10 +230,11 @@ func CheckWarningDomainsAtTime(t time.Time, cfg config.Config) []string
 `EvaluateRulesAtTime` returns the set of domains that should be blocked at `t`. Algorithm:
 
 1. If `cfg.IsPaused(t)` — return empty map (pause overrides everything).
-2. For each rule with `is_active=true`, resolve `cfg.ResolveGroup(rule.Group)` to a domain list (skip the rule if the group is missing or empty), then look up `Schedules[t.Weekday().String()]`.
-3. For each slot, parse `Start`/`End` as `15:04`, build a same-day comparison time, check `slotStart <= now < slotEnd`.
-4. On the first matching slot, add every domain in the resolved group to the result and stop checking remaining slots for that rule.
-5. After schedule evaluation, if `quotaUsage` is non-nil, add every domain from any rule whose group has `used >= DailyQuotaMinutes` — quota-exhausted groups are blocked for the rest of the day regardless of the schedule window.
+2. If `cfg.IsLockedByPomodoro(t)` — return the union of every active rule's resolved domains (focus session forces blocking on, ignoring schedules and quota). See section 8 for details.
+3. For each rule with `is_active=true`, resolve `cfg.ResolveGroup(rule.Group)` to a domain list (skip the rule if the group is missing or empty), then look up `Schedules[t.Weekday().String()]`.
+4. For each slot, parse `Start`/`End` as `15:04`, build a same-day comparison time, check `slotStart <= now < slotEnd`.
+5. On the first matching slot, add every domain in the resolved group to the result and stop checking remaining slots for that rule.
+6. After schedule evaluation, if `quotaUsage` is non-nil, add every domain from any rule whose group has `used >= DailyQuotaMinutes` — quota-exhausted groups are blocked for the rest of the day regardless of the schedule window.
 
 `quotaUsage` maps group name → minutes used today (computed from DNS usage buckets). Callers pass `nil` when no quota enforcement is needed (e.g. test utilities, `--test-web` mode).
 
@@ -442,6 +443,7 @@ type Config struct {
     Groups   map[string][]string `json:"groups"`
     Rules    []Rule              `json:"rules"`
     Pause    *PauseWindow        `json:"pause,omitempty"`
+    Pomodoro *PomodoroSession    `json:"pomodoro,omitempty"`
 }
 
 type Settings struct {
@@ -465,6 +467,13 @@ type TimeSlot struct {
 
 type PauseWindow struct {
     Until time.Time `json:"until"`
+}
+
+type PomodoroSession struct {
+    Phase        string    `json:"phase"`           // "work" | "break"
+    PhaseEndsAt  time.Time `json:"phase_ends_at"`
+    WorkMinutes  int       `json:"work_minutes"`    // 1..120, captured at session start
+    BreakMinutes int       `json:"break_minutes"`   // 1..60, captured at session start
 }
 ```
 
@@ -506,6 +515,19 @@ The scheduler calls `LoadConfig()` once per tick. `web.ConfigHandler` also calls
 
 `PauseWindow.Until` is an absolute `time.Time` (RFC3339 in JSON). `Config.IsPaused(t)` returns true when the field is non-nil and `t < Until`. `EvaluateRulesAtTime` and `CheckWarningDomainsAtTime` both short-circuit to empty when paused. The scheduler self-clears expired pauses at the top of each tick so `config.json` doesn't accumulate stale entries.
 
+### Pomodoro session
+
+Pomodoro is the inverse of pause: where pause forces blocking *off*, the work phase of a Pomodoro session forces blocking *on* for every active rule, regardless of schedule. `Config.IsLockedByPomodoro(t)` returns true when `Pomodoro != nil`, `Phase == "work"`, and `t < PhaseEndsAt`. When that returns true, `EvaluateRulesAtTime` short-circuits *before* the per-rule schedule check and returns the union of every active rule's resolved domains.
+
+The session is captured in config (rather than held in scheduler memory) so it survives daemon restarts and laptop sleep — the next tick after wake re-runs the same `IsLockedByPomodoro` check and either keeps the lock, transitions to break, or clears the session.
+
+Phase transitions happen in the scheduler tick when `t >= PhaseEndsAt`:
+
+1. **work → break** — `config.AdvancePomodoroPhase()` rewrites the field with `Phase="break"` and `PhaseEndsAt = now + BreakMinutes`. A macOS notification fires (`"Sentinel — Break time!"`).
+2. **break → cleared** — `config.ClearPomodoro()` sets the field to `nil`. Notification: `"Sentinel — Ready?"`. Sessions don't auto-restart; the user must explicitly start the next one from the dashboard.
+
+Two endpoints layer extra protection on top of this: the work phase causes `POST /api/pomodoro` (start) to refuse if a session is already running, `DELETE /api/pomodoro` to return `423 Locked`, and `POST /api/config/update` to also return `423`. This makes "edit your way out of focus mode" require dropping to `config.json` directly with admin access — friction, not security.
+
 ---
 
 ## 9. Web server & HTTP API
@@ -528,6 +550,8 @@ The scheduler calls `LoadConfig()` once per tick. `web.ConfigHandler` also calls
 | `/api/pf-preview` | GET, POST | token | Show resolved IPs and pf anchor content (strict mode only) |
 | `/api/pause` | POST | token | Body `{"minutes": N}` — `1 <= N <= 240` |
 | `/api/pause` | DELETE | token | Clear pause |
+| `/api/pomodoro/start` | POST | token | Body `{"work_minutes": 1..120, "break_minutes": 1..60}` |
+| `/api/pomodoro` | DELETE | token | Clear session — returns `423` during the work phase |
 | `/api/usage` | GET | token | Per-group and per-domain DNS usage minutes; `?range=today\|7d\|30d\|60d` |
 
 ### Auth model
