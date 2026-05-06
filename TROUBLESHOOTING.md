@@ -170,6 +170,43 @@ See [§6 Restarting after a binary update](#restarting-after-a-binary-update) fo
 
 Strict mode adds a pf (packet filter) firewall layer on top of DNS blocking. DNS alone can be bypassed by apps that have cached a real IP; pf drops packets to those IPs at the kernel level regardless. Both layers must be working for strict mode to be effective.
 
+#### One-shot health check (copy-paste this block first)
+
+If something seems off and you want a single status snapshot before drilling into specific layers, run this — it touches every layer strict mode relies on:
+
+```bash
+# All-layers strict-mode health check. Read top to bottom — first failure narrows the problem.
+echo "=== service ===";          sudo ./sentinel status
+echo "=== mode    ===";          curl -s http://localhost:8040/api/config | jq -r '.settings.enforcement_mode'
+echo "=== sys DNS ===";          scutil --dns | grep "nameserver\[0\]" | head -3
+echo "=== dns layer ===";        dig @127.0.0.1 facebook.com +short
+echo "=== pf enabled ===";       sudo pfctl -s info | head -1
+echo "=== pf anchor ===";        sudo pfctl -s Anchors | grep sentinel
+echo "=== pf rule count ===";    sudo pfctl -a sentinel -s rules 2>/dev/null | wc -l
+echo "=== pf tables ===";        sudo pfctl -a sentinel -s Tables 2>/dev/null
+echo "=== pf v4 IPs (first table) ==="
+HASH=$(sudo pfctl -a sentinel -s rules 2>/dev/null | grep -oE '__automatic_[a-f0-9]+_0' | head -1)
+[ -n "$HASH" ] && sudo pfctl -a sentinel -t "$HASH" -T show | head -10
+echo "=== anchor file on disk ===";  sudo head -20 /etc/pf.anchors/sentinel 2>/dev/null
+echo "=== pf.conf injection  ===";  grep -A2 'sentinel' /etc/pf.conf
+echo "=== last 60s of logs ===";    log show --predicate 'process == "sentinel"' --last 60s 2>/dev/null | grep -E "pf:|enforcer|error" | tail -20
+```
+
+What the output should look like when strict mode is healthy:
+
+- `mode` = `strict`
+- `sys DNS` includes `127.0.0.1`
+- `dns layer` returns `0.0.0.0` for a domain you've blocked
+- `pf enabled` says `Status: Enabled`
+- `pf anchor` shows `sentinel`
+- `pf rule count` is non-zero (typically 4–8 rule lines per table set)
+- `pf v4 IPs` lists at least one IP for an active block
+- `anchor file on disk` is non-empty
+- `pf.conf injection` shows the `anchor "sentinel"` block
+- `last 60s of logs` has no `error` lines
+
+If any of these look wrong, jump to the matching layer-specific section below.
+
 #### Layer 1: Verify DNS is blocking (same as `dns` mode)
 
 ```bash
@@ -347,6 +384,17 @@ If step 1 returns `0.0.0.0` but step 2 returns a real IP, the block is being byp
 **Option B — Switch to `strict` mode (recommended)**
 
 Strict mode resolves the real IPs of blocked domains and installs them in a pf table. Even if DoH gives the browser a live IP, pf drops the connection at the kernel before any packets leave the machine.
+
+In addition, strict mode bundles an always-on `_doh` group that lists the public DoH/DoT endpoints (`dns.google`, `cloudflare-dns.com`, `mozilla.cloudflare-dns.com`, `dns.quad9.net`, etc.). Their IPs are kept in a separate pf table with **port-restricted** rules — TCP/443 (DoH) and TCP+UDP/853 (DoT) only — so the browser can't reach the DoH provider over its dedicated ports while leaving regular HTTPS traffic to those CDNs untouched. You can confirm the `_doh` rules are loaded with:
+
+```bash
+sudo pfctl -a sentinel -s rules | grep -E 'port = (443|853)'
+# Should show three rules per IP family:
+#   block drop out quick inet  proto tcp from any to <__automatic_xxxxxxxx_4> port = 443
+#   block drop out quick inet  proto tcp from any to <__automatic_xxxxxxxx_5> port = 853
+#   block drop out quick inet  proto udp from any to <__automatic_xxxxxxxx_6> port = 853
+#   (plus inet6 equivalents)
+```
 
 ```bash
 # Verify strict mode is blocking at the IP layer:

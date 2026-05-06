@@ -396,16 +396,28 @@ This function is what the test suite hits — no port binding, no global state, 
 
 ### Anchor file model
 
-The daemon owns one pf anchor named `sentinel`, stored at `/etc/pf.anchors/sentinel`. The anchor file content is regenerated on every Activate:
+The daemon owns one pf anchor named `sentinel`, stored at `/etc/pf.anchors/sentinel`. The anchor file content is regenerated on every Activate. It has **two sections** depending on whether the `_doh` group is part of the active block set:
 
 ```
-table <blocked_ips> persist {
-  142.251.215.110
-  142.251.215.111
-  ...
-}
-block drop out quick proto {tcp udp} from any to <blocked_ips>
+# Section 1 — regular blocked-domain IPs (all ports, both protocols)
+block drop out quick inet  proto tcp from any to { 142.251.215.110 142.251.215.111 ... }
+block drop out quick inet  proto udp from any to { 142.251.215.110 ... }
+block drop out quick inet6 proto tcp from any to { 2607:f8b0:4007:80a::200e ... }
+block drop out quick inet6 proto udp from any to { 2607:f8b0:4007:80a::200e ... }
+
+# Section 2 — DoH/DoT endpoints, port-restricted so plain UDP/53 still works
+block drop out quick inet  proto tcp from any to { 8.8.8.8 1.1.1.1 ... } port = 443
+block drop out quick inet  proto tcp from any to { 8.8.8.8 1.1.1.1 ... } port = 853
+block drop out quick inet  proto udp from any to { 8.8.8.8 1.1.1.1 ... } port = 853
+# (plus inet6 equivalents)
 ```
+
+macOS automatically promotes inline IP lists to internal `__automatic_<hash>_<n>` tables, which is what shows up under `pfctl -a sentinel -s Tables`. The two sections exist because:
+
+- Regular blocked IPs (Reddit, YouTube, …) get an **all-port** drop — there's no legitimate traffic the daemon needs to those CDNs.
+- DoH/DoT endpoints (`dns.google`, `cloudflare-dns.com`, …) get a **port-restricted** drop on TCP/443 and TCP+UDP/853 only. UDP/53 plain DNS to the same IPs is left open so the daemon's own `backup_dns` (typically `1.1.1.1:53`) keeps working — which is what makes the `_doh` group safe to enable by default in strict mode.
+
+The two-section split is what allows the `_doh` group to be **always-on** in strict mode without breaking the daemon's own upstream resolution. See `internal/pf/pf.go` (`Generate*` helpers) and the rendered example at `/etc/pf.anchors/sentinel` after `sudo ./sentinel start`.
 
 The anchor is wired into `/etc/pf.conf` between marker lines:
 
@@ -420,9 +432,11 @@ load anchor "sentinel" from "/etc/pf.anchors/sentinel"
 
 `RemoveAnchor()` flushes the table, strips the marker block from pf.conf, reloads pf, and deletes the anchor file.
 
-`ActivateBlock(domains, primaryDNS)` resolves each domain to A and AAAA addresses (via `miekg/dns`, falling back to `net.LookupHost`), regenerates the anchor file, runs `pfctl -a sentinel -f <anchor>` to load it, and then runs `pfctl -k <src> -k <ip>` per IP to kill any existing connections.
+`ActivateBlockMixed(domains, dohDomains, primaryDNS, backupDNS)` resolves each domain to A and AAAA addresses against both `primaryDNS` and `backupDNS` (the union widens coverage when CDN edges return geo-different answers per resolver), regenerates the anchor file with the two sections shown above, runs `pfctl -a sentinel -f <anchor>` to load it, and then runs `pfctl -k <src> -k <ip>` per IP **only for the regular block set** to kill any existing connections. State-kill is intentionally skipped for DoH IPs: killing all states to `1.1.1.1` would also drop the daemon's own `backup_dns` sessions on UDP/53. `ActivateBlock(domains, primaryDNS, backupDNS)` is a thin wrapper that passes `nil` for `dohDomains`.
 
-`DeactivateBlock()` flushes the table via `pfctl -a sentinel -t blocked_ips -T flush`, tolerating "No such table" since the table may not exist on first run.
+`DeactivateBlock()` writes a stub anchor (`# no IPs to block`) and reloads it, which empties any `__automatic_*` tables that pf had promoted from the previous activation. No explicit `pfctl -t … -T flush` is needed because the reload replaces the rule set wholesale.
+
+`Refresh()` is called by `StrictEnforcer` every scheduler tick to re-resolve the currently-blocked domains. CDNs rotate IPs constantly, so the rule set has to be rebuilt periodically rather than left static after the initial activation.
 
 ### Why preview functions are exported
 

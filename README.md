@@ -27,10 +27,22 @@ AdGuard Home is a solid network-wide DNS blocker, and Sentinel can run alongside
 | Multiple block windows per day per group | ✅ e.g. 9–12 and 2–6 | ❌ One slot per day ([#7253](https://github.com/AdguardTeam/AdGuardHome/issues/7253)) |
 | Independent schedule per domain group | ✅ Each rule is separate | ❌ One shared schedule for all ([#7146](https://github.com/AdguardTeam/AdGuardHome/issues/7146)) |
 | Custom domain groups | ✅ Any domains you choose | ❌ Predefined catalog only ([#1692](https://github.com/AdguardTeam/AdGuardHome/issues/1692)) |
+| Survives browser DNS-over-HTTPS (Secure DNS) | ✅ `hosts` & `strict` modes | ❌ DoH skips it |
+| Kernel-level IP blocking (pf firewall) | ✅ `strict` mode (macOS) | ❌ DNS-only |
 | Browser tab auto-close on block | ✅ macOS | ❌ |
 | Pre-block notifications | ✅ macOS | ❌ |
 
-AdGuard Home excels at network-wide content filtering — blocking ad trackers or adult content for every device on a home network. Sentinel is built for personal schedule enforcement on a single machine: granular enough to say "block Reddit 9–12 and 2–6, block gaming all evening, and leave streaming open on weekends." If you already run AdGuard Home, see [Running alongside AdGuard Home](TROUBLESHOOTING.md#running-sentinel-alongside-adguard-home-or-any-other-local-dns-service) to run both together.
+AdGuard Home excels at network-wide content filtering — blocking ad trackers or adult content for every device on a home network. Sentinel is built for personal schedule enforcement on a single machine: granular enough to say "block Reddit 9–12 and 2–6, block gaming all evening, and leave streaming open on weekends." It also stays effective against a browser configured for DNS-over-HTTPS, which AdGuard Home cannot — see [the DoH FAQ](#what-about-browsers-using-dns-over-https-doh-or-secure-dns) below for how each Sentinel mode handles that. If you already run AdGuard Home, see [Running alongside AdGuard Home](TROUBLESHOOTING.md#running-sentinel-alongside-adguard-home-or-any-other-local-dns-service) to run both together.
+
+### What about browsers using DNS-over-HTTPS (DoH or "Secure DNS")?
+
+Sentinel handles all three common DoH cases:
+
+1. **Default browser installs.** Chrome's automatic Secure DNS only upgrades to DoH when the system DNS is a *known* provider (8.8.8.8, 1.1.1.1, etc.). Sentinel sets system DNS to `127.0.0.1` (the local proxy), which is not on Chrome's list, so automatic mode stays on regular DNS and goes through the proxy normally. **No action needed.**
+2. **`hosts` mode.** `getaddrinfo` reads `/etc/hosts` before any resolver, so blocked entries take effect even when the browser is using DoH. **No action needed.**
+3. **`strict` mode (recommended for advanced users).** Even if a user has manually set "With Google" / "With Cloudflare" in `chrome://settings/security`, strict mode still blocks because (a) it resolves the real IPs of blocked domains and drops outbound packets at the kernel via `pf`, and (b) it bundles an always-on `_doh` group of common DoH/DoT endpoints (`dns.google`, `cloudflare-dns.com`, `mozilla.cloudflare-dns.com`, `dns.quad9.net`, …) and blocks them on TCP/443 (DoH) and TCP+UDP/853 (DoT) so the browser can't reach the DoH provider in the first place. UDP/53 plain DNS to those CDNs is left open so the daemon's own `backup_dns` keeps working. **No action needed.**
+
+The only mode DoH can bypass is `dns`-only mode combined with a browser that has a *manually-configured* DoH provider — switch that machine to `hosts` or `strict` and you're covered. See [TROUBLESHOOTING.md § Browser DNS-over-HTTPS bypass](TROUBLESHOOTING.md#browser-dns-over-https-doh-bypass) for verification commands and a deeper walkthrough.
 
 ### Does Sentinel keep my laptop awake?
 

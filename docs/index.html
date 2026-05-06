@@ -429,10 +429,10 @@
               <span class="w-2.5 h-2.5 rounded-full bg-sky-400"></span>
             </div>
           </div>
-          <p class="text-slate-400 text-sm leading-relaxed mb-5">DNS proxy plus a <code class="text-slate-300">pf</code> (Packet Filter) anchor that drops outbound packets to blocked IPs at the kernel level. For when DNS isn't enough.</p>
+          <p class="text-slate-400 text-sm leading-relaxed mb-5">DNS proxy plus a <code class="text-slate-300">pf</code> (Packet Filter) anchor that drops outbound packets to blocked IPs at the kernel level. Includes an always-on <code class="text-slate-300">_doh</code> group covering public DoH/DoT endpoints, so even browsers configured for Secure DNS can't escape.</p>
           <ul class="space-y-2 mb-6 flex-1">
             <li class="flex items-center gap-2 text-sm text-slate-300"><span class="text-emerald-400">✓</span> Kernel-level IP blocking</li>
-            <li class="flex items-center gap-2 text-sm text-slate-300"><span class="text-emerald-400">✓</span> Beats hard-coded resolvers</li>
+            <li class="flex items-center gap-2 text-sm text-slate-300"><span class="text-emerald-400">✓</span> Beats browser DoH / hard-coded resolvers</li>
             <li class="flex items-center gap-2 text-sm text-slate-400"><span class="text-amber-400">!</span> macOS only</li>
             <li class="flex items-center gap-2 text-sm text-slate-400"><span class="text-slate-600">✗</span> Degrades to DNS if pf fails</li>
           </ul>
@@ -549,6 +549,10 @@
             a: `VPNs reroute your traffic but DNS resolution still goes through the system resolver (or Sentinel's local proxy in DNS/strict mode). In strict mode, pf drops IP-level packets too, so VPN tunnels that don't fully capture the system resolver are also covered.`
           },
           {
+            q: `What about browsers using DNS-over-HTTPS (DoH or "Secure DNS")?`,
+            a: `Sentinel handles all three common DoH cases. (1) Default browser installs — Chrome's automatic mode only upgrades to DoH when the system DNS is a known provider, but Sentinel sets system DNS to 127.0.0.1, so automatic mode stays on regular DNS. (2) hosts mode — getaddrinfo reads /etc/hosts before any resolver, so DoH never gets a chance to resolve a blocked domain. (3) strict mode (recommended for advanced users) — even if a user has manually picked "With Google" or "With Cloudflare" in the browser, strict mode resolves the real IPs and drops outbound packets at the kernel via pf. It also blocks the public DoH/DoT endpoints themselves on TCP/443 and TCP/UDP/853 via an always-on _doh group, so the browser can't reach the DoH provider at all. The only mode DoH can bypass is dns-only mode with a manually configured browser-level DoH provider — switch to hosts or strict and you're covered.`
+          },
+          {
             q: `Will it affect apps other than browsers?`,
             a: `Yes. Sentinel blocks at the network layer, so every app — Electron apps, Discord, games, native clients — is blocked if the domain is in your schedule. That's the advantage over browser extensions.`
           },
@@ -601,7 +605,7 @@
             </svg>
           </button>
           <div x-show="open" x-transition x-cloak class="px-6 pb-5 text-slate-400 text-sm leading-relaxed space-y-4">
-            <p>AdGuard Home is a solid network-wide DNS blocker, and Sentinel can run alongside it. But its scheduling model has hard limits that make fine-grained personal rules impractical:</p>
+            <p>AdGuard Home is a solid network-wide DNS blocker, and Sentinel can run alongside it. But its scheduling model has hard limits that make fine-grained personal rules impractical, and it can't survive a browser configured to use DNS-over-HTTPS (Secure DNS) — DoH skips the network resolver entirely. Sentinel's hosts and strict modes both stay effective in that scenario:</p>
             <div class="overflow-x-auto rounded-xl border border-slate-700">
               <table class="w-full text-xs">
                 <thead>
@@ -626,6 +630,16 @@
                     <td class="px-4 py-2.5 text-slate-300">Custom domain groups</td>
                     <td class="px-4 py-2.5 text-center text-emerald-400">✓ Any domains</td>
                     <td class="px-4 py-2.5 text-center text-slate-500">Predefined catalog only</td>
+                  </tr>
+                  <tr class="bg-[#111111]">
+                    <td class="px-4 py-2.5 text-slate-300">Survives browser DNS-over-HTTPS (Secure DNS)</td>
+                    <td class="px-4 py-2.5 text-center text-emerald-400">✓ hosts &amp; strict mode</td>
+                    <td class="px-4 py-2.5 text-center text-slate-500">✗ DoH skips it</td>
+                  </tr>
+                  <tr class="bg-[#111111]">
+                    <td class="px-4 py-2.5 text-slate-300">Kernel-level IP blocking (pf firewall)</td>
+                    <td class="px-4 py-2.5 text-center text-emerald-400">✓ strict mode (macOS)</td>
+                    <td class="px-4 py-2.5 text-center text-slate-500">✗ DNS-only</td>
                   </tr>
                   <tr class="bg-[#111111]">
                     <td class="px-4 py-2.5 text-slate-300">Browser tab auto-close on block</td>

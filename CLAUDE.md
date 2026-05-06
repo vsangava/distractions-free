@@ -4,7 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Project Does
 
-A system-level DNS proxy daemon for macOS (and Windows) that enforces productivity schedules by intercepting DNS at the OS level. It runs as a privileged background service (`launchd` on macOS), blocking distracting domains by returning `0.0.0.0`, closing browser tabs via AppleScript, and sending pre-block warnings — all unkillable by regular users.
+A system-level productivity daemon for macOS (and Windows) that enforces per-time-of-day blocking rules. It runs as a privileged background service (`launchd` on macOS) and offers three interchangeable enforcement modes selected by `enforcement_mode` in config:
+
+- **`hosts`** (default, cross-platform) — rewrites the system hosts file. Survives browser-DoH bypass because `getaddrinfo` reads `/etc/hosts` before any resolver.
+- **`dns`** — local DNS proxy on `127.0.0.1:53` returning `0.0.0.0` for blocked domains and forwarding everything else upstream.
+- **`strict`** (macOS only, recommended) — DNS proxy plus a `pf` packet-filter anchor that drops outbound packets to the resolved IPs at the kernel. Includes a `_doh` group of public DoH/DoT endpoints that's always-on, so even browsers with a manually-configured DoH provider can't route around the block.
+
+The daemon also closes Chrome/Safari/Arc/Brave tabs via AppleScript on every tick during an active block, fires a 3-minute pre-block notification, and runs a web dashboard on `:8040` for rule editing, status, pause, focus sessions, and quota inspection. All unkillable by regular users.
 
 ## Workflow
 
@@ -41,20 +47,25 @@ The binary has four flags for development testing — none require root or servi
 
 ### Data Flow
 
-1. Scheduler ticks every minute, calling `EvaluateRulesAtTime(now, cfg)` to compute `map[string]bool` of blocked domains.
-2. On state change: flushes macOS DNS cache, generates AppleScript to close matching browser tabs.
-3. DNS proxy on port 53 checks each query against the `activeBlocks` map — returns `0.0.0.0` if blocked, otherwise forwards to upstream (default: 8.8.8.8, fallback: 1.1.1.1).
-4. 3 minutes before a block starts, `CheckWarningDomainsAtTime()` triggers native macOS notifications.
+1. Scheduler ticks every minute, calling `EvaluateRulesAtTime(now, cfg, quotaUsage)` to compute the blocked-domain set. Pause and Pomodoro work-phase are checked first as overrides.
+2. The scheduler diffs against the previous tick and hands `newlyBlocked` / `newlyUnblocked` to the active enforcer (one of `HostsEnforcer` / `DNSEnforcer` / `StrictEnforcer`, picked from `enforcement_mode`).
+3. On state change: enforcer applies its mode-specific change (`/etc/hosts` rewrite, in-memory blocked map update, or pf anchor regen + DNS cache flush). AppleScript closes matching browser tabs every tick, not just on state transitions.
+4. In `strict` mode, the enforcer also calls `pf.Refresh()` every tick to re-resolve CDN IPs that may have rotated since the last activation, keeping the pf table current.
+5. The DNS proxy on port 53 (used by `dns` and `strict` modes) checks each query against the `activeBlocks` map and returns `0.0.0.0` if blocked, else forwards to `primary_dns` (default `8.8.8.8:53`) with `backup_dns` failover (default `1.1.1.1:53`). Non-blocked queries for configured groups are appended to a usage log used for daily-quota enforcement.
+6. 3 minutes before a block starts, `CheckWarningDomainsAtTime()` triggers native macOS notifications.
 
 ### Key Packages
 
 | Package | Responsibility |
 |---|---|
-| `cmd/app/main.go` | Entry point; dispatches service, test, and direct-run modes |
-| `internal/config` | JSON config loading from OS-specific paths; thread-safe via `RWMutex` |
-| `internal/scheduler` | 1-minute ticker, rule evaluation, pre-block warnings, AppleScript tab closing |
-| `internal/proxy` | DNS server; blocking vs. upstream forwarding; primary/backup DNS failover |
-| `internal/web` | HTTP dashboard on `:8040`; embedded static files via `go:embed`; `/api/config` and `/api/test-query` |
+| `cmd/app/main.go` | Entry point; dispatches service, test, and direct-run modes; idempotent `setup` and forensic `clean` paths |
+| `internal/config` | JSON config loading from OS-specific paths; thread-safe via `RWMutex`; pause/pomodoro state helpers |
+| `internal/enforcer` | `Enforcer` interface + factory; `HostsEnforcer` / `DNSEnforcer` / `StrictEnforcer` impls; calls `pf.RemoveAnchorIfPresent` on mode downgrade so leftover state self-heals |
+| `internal/pf` | macOS pf anchor management — two-section anchor (regular all-port blocks + DoH/DoT port-restricted blocks on TCP/443 + TCP/UDP/853), multi-resolver IP union, `pfctl` invocations |
+| `internal/scheduler` | 1-minute ticker, rule evaluation, pre-block warnings, per-tick AppleScript tab closing, daily quota tracking |
+| `internal/proxy` | DNS server; blocking vs. upstream forwarding; primary/backup DNS failover; usage event logging for quotas |
+| `internal/web` | HTTP dashboard on `:8040`; embedded static files via `go:embed`; `/api/config`, `/api/status`, `/api/pause`, `/api/pomodoro/*`, `/api/usage`, `/api/test-query` |
+| `internal/cleanup` | Per-step idempotent `clean` pipeline — service uninstall, hosts revert, pf anchor removal, DNS reset, config dir delete, installed-binary unlink |
 | `internal/testcli` | Shared logic for `--test-query` (CLI) and web UI query handler |
 
 ### Testability Pattern
@@ -77,8 +88,9 @@ Config is re-read every scheduler tick — live edits take effect within 60 seco
 
 ### OS-Specific Notes
 
-- Tab closing and pre-block notifications are macOS-only (AppleScript targeting Chrome and Safari).
+- Tab closing and pre-block notifications are macOS-only (AppleScript targets Chrome, Safari, Arc, and Brave). The probe shells out via `su - <console-user> -c osascript ...` because the daemon runs as root.
 - DNS cache flush uses `dscacheutil -flushcache` + `killall -HUP mDNSResponder` on macOS.
+- `strict` mode is macOS only — `pf` integration is gated behind `//go:build darwin` and the enforcer factory falls back to `dns` mode on other OSes.
 - Port 53 binding requires root; service installation requires admin privileges.
 
 ## Documentation
