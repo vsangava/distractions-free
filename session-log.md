@@ -642,3 +642,60 @@ Anchor-file model section was the most stale — said "single `<blocked_ips>` ta
 2. **Docs drift from code shows up in the architecture sections first.** CLAUDE.md and DESIGN.md both still described the pre-multi-mode code layout. Worth a periodic `grep -L 'enforcer'` style audit against what actually exists in `internal/`.
 
 **Wrap-up:** PR opened with five files updated (CLAUDE.md, README.md, docs/index.html, TROUBLESHOOTING.md, DESIGN.md). Pure docs change — no release cut.
+
+---
+
+## May 6 — Foreground-tab time tracking, opt-in (issue #92)
+**Session ID:** `feat-issue-92-foreground` · **PR:** TBD
+
+**Opening prompt:**
+> "continue what you had planned to do on issue 92. your entire plan is added as a comment and I also added a latest comment to the issue with my response that you need to consider."
+
+**What happened:**
+
+Plan was already in #92 as a comment from the prior session: extend the per-tick AppleScript surface so the active browser tab's domain is recorded as a *separate* metric — `foreground_minutes` — alongside the DNS-bucket `used_minutes`. User's response on the comment crystallized the constraints:
+
+1. Keep the two metrics *separate*; do not feed foreground time into `daily_quota_minutes`.
+2. Browsers only for now — file a follow-up for non-browser apps (Slack, Discord, Xcode).
+3. File a follow-up for Windows.
+4. Behind a config flag.
+5. Confirm and call out that foreground tracking works in `hosts` mode (where DNS-bucket tracking does not).
+6. Privacy floor: only track domains in any configured group, excluding `_doh`.
+
+That last point is the big one — without it the feature silently expands from "tracking what you opted into" to "tracking everything you browse." Codified in `trackedDomainSet()` (`scheduler/foreground.go`) which walks `cfg.Groups` and skips `enforcer.DohGroupName`.
+
+### Implementation shape
+
+- `config.Settings.EnableForegroundTracking bool` — opt-in, default false.
+- `proxy.UsageEvent` gained `Kind` (`"" | "dns" | "foreground"`). Empty = legacy = DNS, so pre-feature `usage.jsonl` entries keep aggregating without migration.
+- New `scheduler/foreground.go`: AppleScript probe returns `frontmost_app<TAB>active_url<TAB>idle_seconds`. Idle from `ioreg | awk` on `HIDIdleTime` (no entitlement). Per-browser URL access uses `active tab` for Chrome/Arc/Brave, `current tab` for Safari (Safari is the odd one out — important).
+- Gating in `recordForegroundTick`: empty probe output is a clean no-op (non-darwin path), idle ≥ 60s suppresses the event, frontmost-app must be one of four supported browsers, URL must parse as `http`/`https` with a non-empty host (filters `chrome://newtab/`, `about:blank`), host (lowercased + `www.` stripped, subdomain-aware) must match a configured non-`_doh` domain.
+- Aggregation: `proxy.ComputeGroupForegroundMinutes` uses **1-minute** buckets — naturally minute-granular because the scheduler ticks each minute and emits at most one event per tick. DNS aggregator now filters by `IsDNSKind()` so the two signals stay independent.
+- `/api/usage` adds `foreground_minutes` to both group rows and domain rows; the dashboard adds a Foreground (min) column. The "no data" hint distinguishes DNS (needs dns/strict) vs foreground (needs the flag).
+
+### Cross-mode confirmation (the user's point #5)
+
+The probe lives in the scheduler tick, not in the enforcer — exactly the same call site as the existing per-tick close-tabs path. It writes to `usage.jsonl` directly via `proxy.AppendUsageEvent`. There is no DNS proxy in the path. Concretely:
+
+| Mode | DNS-bucket `used_minutes` | Foreground `foreground_minutes` |
+|------|---------------------------|----------------------------------|
+| `hosts` | unavailable | works |
+| `dns` | works | works |
+| `strict` | works | works |
+
+So foreground tracking is the *only* per-domain time signal in `hosts` mode — a meaningful change for users who run hosts mode for simplicity but still want to see where their time goes. Called out in DESIGN.md and the README field reference.
+
+### Edge case: `extractHost` and `chrome://newtab/`
+
+First attempt to extract host used `url.Parse(rawURL).Hostname()`. That returns `"newtab"` for `chrome://newtab/` because chrome:// is a valid URL scheme and "newtab" parses as the authority. Tracked-domain matching would then return "" (defense at the next layer), but it felt fragile — a user with a configured "newtab.example" *could* in principle get a false positive if a future browser ever exposed a similar URL scheme. Tightened `extractHost` to return "" for any non-http(s) scheme. Test had to be updated to match.
+
+### Tests
+
+Two new test files. `proxy/foreground_test.go` covers schema invariants — DNS aggregator must ignore foreground events, foreground aggregator must ignore DNS events, legacy empty-Kind events keep aggregating into `used_minutes`, `IsDNSKind` truth table. `scheduler/foreground_test.go` covers parser edge cases (malformed inputs, idle-non-integer), the tracked-domain set excluding `_doh`, the matcher's subdomain attribution and false-positive guards (`youtubex.com` must NOT match `youtube.com`), `extractHost` (lowercasing, www-stripping, scheme-gating), and the gating decisions in `recordForegroundTick` via a stub probe runner — happy path, idle skip, non-browser app, untracked domain, `_doh` excluded, `www.` stripping, internal browser URLs, and probe-error propagation.
+
+### Follow-ups filed
+
+- **#93** — foreground time tracking for non-browser apps (Slack, Discord, Xcode). Notes the data-shape change (no per-URL granularity), enumerates options, scopes out app-time quotas as a deliberately separate product call.
+- **#94** — Windows-side exploration. Documents the Win32 / UI-Automation / extension trade-offs and aligns on reusing the same `Kind: "foreground"` event shape so the dashboard renders without code changes.
+
+**Wrap-up:** Branch `feat/foreground-tab-tracking` opened with config flag, probe, parsing/matching helpers, scheduler wiring, usage-log schema bump, /api/usage and dashboard updates, and 18 new tests. Two follow-up issues filed (#93, #94). Docs updated across DESIGN.md, README.md, and docs/index.html.

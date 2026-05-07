@@ -314,12 +314,67 @@ Each scheduler tick also:
 **Usage measurement:** `proxy/usagelog.go` records each non-blocked DNS query for a group domain as a `UsageEvent{TS, Domain, Group}` in `{configDir}/usage.jsonl`. Usage is aggregated in 5-minute buckets (`TS.Unix() / 300`) and usage minutes = `distinct buckets × 5`. The 5-minute window deduplicates Chrome's aggressive DNS re-resolution (TTL capped at 60s internally) while keeping granularity fine enough for quotas of 15+ minutes.
 
 **Known limitations:**
-- Tracking requires `dns` or `strict` mode. In `hosts` mode the proxy never sees queries.
+- Tracking requires `dns` or `strict` mode. In `hosts` mode the proxy never sees queries — see *Foreground tab tracking* below for the complementary signal that does work in `hosts` mode.
 - **Browsers with a specific DoH provider manually configured bypass usage tracking.** Chrome's automatic mode will use the system resolver (`127.0.0.1`) and is unaffected — it only upgrades to DoH when the system DNS is a known provider (8.8.8.8, 1.1.1.1), and Sentinel replaces that with `127.0.0.1`. However, if a user has explicitly set a specific DoH provider in browser settings (Chrome: "With Google" / "With Cloudflare"; Firefox: "DNS over HTTPS" set to a provider), queries are sent directly over HTTPS on port 443, completely skipping `127.0.0.1:53`. Those queries never reach the proxy, so no usage event is recorded and quota never fills up. `strict` mode does not fix this — pf blocks connections but does not intercept HTTPS traffic to DoH providers. The fix is to leave browser DNS on automatic (the default), or disable the manually configured DoH provider. See [TROUBLESHOOTING.md §4 Browser DNS-over-HTTPS bypass](./TROUBLESHOOTING.md#browser-dns-over-https-doh-bypass) for diagnostic commands.
-- Background tabs for SPAs (Reddit, YouTube) generate DNS traffic and consume quota even when the user is not actively browsing. This mirrors the behaviour of iOS Screen Time for network-active apps and cannot be solved without a browser extension.
+- Background tabs for SPAs (Reddit, YouTube) generate DNS traffic and consume quota even when the user is not actively browsing. The optional foreground-tab tracker described below sidesteps this for *measurement* (not for quota — the DNS-bucket signal still drives `DailyQuotaMinutes`).
 - The 5-minute bucket slightly over-counts sessions shorter than 5 minutes (a 2-minute visit counts as 5 minutes) and slightly under-counts if another tool (AdGuard Home, systemd-resolved) intercepts queries before they reach Sentinel.
 
 **Retention:** `usage.jsonl` is pruned once per calendar day to 60 days. The block event log (`events.jsonl`) is pruned to 30 days on the same tick.
+
+### Foreground tab tracking (macOS, opt-in)
+
+A second usage signal sits alongside DNS-bucket tracking for users who want the
+"how long did I actually look at this site" view rather than "how often did the
+machine resolve it." It's macOS-only and opt-in via `settings.enable_foreground_tracking`.
+
+**How it works.** Each scheduler tick (1/min), if the flag is on, the scheduler
+runs a single AppleScript probe that returns `frontmost_app<TAB>active_url<TAB>idle_seconds`.
+Idle comes from IOKit's `HIDIdleTime` (no entitlement needed). The active URL
+is read from `active tab of front window` for Chrome/Arc/Brave, and `current
+tab of front window` for Safari. The tick is recorded as a `UsageEvent{Kind: "foreground"}`
+in the same `usage.jsonl` only when **all** of these are true:
+
+1. `idle_seconds < 60` — user is in front of the machine (not just leaving a tab open).
+2. `frontmost_app` is one of Chrome / Safari / Arc / Brave Browser.
+3. The URL parses as `http`/`https` with a non-empty host (filters out `chrome://newtab/`, `about:blank`, etc.).
+4. The host (with `www.` stripped, lowercased, subdomain-aware) matches a domain in some configured group **other than `_doh`**.
+
+The privacy floor — point 4 — is deliberate: the tracker only ever logs domains
+the user has already configured for blocking. Visiting your bank or therapist
+records nothing. `_doh` is excluded because those endpoints aren't user-visible
+sites and the user explicitly asked us to scope the metric.
+
+**Aggregation.** Foreground events are aggregated in **1-minute** buckets
+(`TS.Unix() / 60`), one minute per distinct bucket. This is naturally
+minute-granular because the scheduler ticks each minute and emits at most one
+event per tick. DNS-kind events are still aggregated in 5-minute buckets
+(`ComputeGroupUsageMinutes` filters by `IsDNSKind()`), so the two signals stay
+independent.
+
+**Backwards compatibility.** Pre-feature `usage.jsonl` entries have no `kind`
+field. `UsageEvent.IsDNSKind()` treats empty `Kind` as `dns`, so existing logs
+keep aggregating into `used_minutes` without any migration step.
+
+**Cross-mode coverage.** Foreground tracking has no coupling to `enforcement_mode`
+— it lives in the scheduler tick, not in the enforcer. Specifically:
+
+| Mode | DNS-bucket `used_minutes` | Foreground `foreground_minutes` |
+|------|---------------------------|----------------------------------|
+| `hosts` | unavailable (no DNS proxy) | works |
+| `dns` | works | works |
+| `strict` | works | works |
+
+So foreground tracking is the *only* per-domain time signal in `hosts` mode.
+
+**Quota enforcement is unchanged.** `DailyQuotaMinutes` continues to drive off
+the DNS-bucket signal. Routing foreground time into quota is a bigger product
+decision that's deliberately out of scope for the metrics addition.
+
+**Limitations.**
+- macOS-only. Windows is tracked separately as a follow-up.
+- Browser-only. Time spent in Slack, Discord, Xcode, etc. is not counted (tracked separately as a follow-up).
+- 60-second granularity. Sessions shorter than a minute may not register.
+- Inherits the `osascript` fragility tax of the per-tick close path — same `su -` user-context elevation under launchd-as-root.
 
 ### AppleScript abstraction
 
