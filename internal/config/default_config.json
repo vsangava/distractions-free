@@ -3,7 +3,8 @@
     "primary_dns": "8.8.8.8:53",
     "backup_dns": "1.1.1.1:53",
     "enforcement_mode": "hosts",
-    "dns_failure_mode": "open"
+    "dns_failure_mode": "open",
+    "enable_foreground_tracking": false
   },
   "groups": {
     "games": [

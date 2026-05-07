@@ -516,10 +516,12 @@ type Config struct {
 }
 
 type Settings struct {
-    PrimaryDNS      string `json:"primary_dns"`
-    BackupDNS       string `json:"backup_dns"`
-    AuthToken       string `json:"auth_token"`
-    EnforcementMode string `json:"enforcement_mode,omitempty"`
+    PrimaryDNS               string `json:"primary_dns"`
+    BackupDNS                string `json:"backup_dns"`
+    AuthToken                string `json:"auth_token"`
+    EnforcementMode          string `json:"enforcement_mode,omitempty"`           // "hosts" | "dns" | "strict"
+    DNSFailureMode           string `json:"dns_failure_mode,omitempty"`           // "open" (default) | "closed"
+    EnableForegroundTracking bool   `json:"enable_foreground_tracking,omitempty"` // macOS-only opt-in
 }
 
 type Rule struct {
@@ -571,6 +573,8 @@ On first run, if the config file doesn't exist, `LoadConfig()` writes a default 
 
 - `primary_dns: "8.8.8.8:53"`, `backup_dns: "1.1.1.1:53"`
 - `enforcement_mode: "hosts"`
+- `dns_failure_mode: "open"`
+- `enable_foreground_tracking: false`
 - A randomly generated 32-character hex `auth_token`
 - Two seed groups — `games` (roblox/epic/steam/fortnite/minecraft) and `social` (discord/facebook/instagram/tiktok/snapchat/reddit) — each bound by an active rule to the school window (09:00–15:00 weekdays) plus a nightly window (21:30–23:59 every day).
 
