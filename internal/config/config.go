@@ -36,6 +36,13 @@ type Settings struct {
 	AuthToken       string `json:"auth_token"`
 	EnforcementMode string `json:"enforcement_mode,omitempty"`
 	DNSFailureMode  string `json:"dns_failure_mode,omitempty"`
+	// EnableForegroundTracking turns on the per-tick AppleScript probe that
+	// records how long each blocked-list domain is actually the foreground
+	// browser tab. macOS-only; safe under any enforcement_mode (hosts/dns/strict)
+	// because the probe runs in the scheduler, independent of the enforcer. Off
+	// by default — flip to true to start populating foreground_minutes in
+	// /api/usage.
+	EnableForegroundTracking bool `json:"enable_foreground_tracking,omitempty"`
 }
 
 // GetEnforcementMode returns the validated enforcement mode, defaulting to "hosts"

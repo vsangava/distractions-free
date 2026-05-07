@@ -814,14 +814,19 @@
     <div id="usageTab" class="tab-content">
         <div class="section">
             <div class="section-header">
-                <div class="section-title">DNS Usage</div>
+                <div class="section-title">Usage</div>
                 <button class="btn-sm btn-success" onclick="loadUsage()">↻ Refresh</button>
             </div>
             <p style="font-size:12px;color:#6c757d;margin-bottom:14px;">
-                Measures time groups were actively used, based on DNS query patterns.
-                Requires <strong>dns</strong> or <strong>strict</strong> enforcement mode.
-                Background tabs for SPAs (Reddit, YouTube) may count toward usage.
-                Browsers in their default configuration are unaffected. If you have manually set a specific DoH provider in browser settings (Chrome: "With Google"/"With Cloudflare"; Firefox: "DNS over HTTPS" set to a provider), those queries bypass the proxy and will not be counted.
+                <strong>Used</strong> measures time groups were actively used, based on DNS query patterns —
+                requires <strong>dns</strong> or <strong>strict</strong> enforcement mode, and may count
+                background SPA tabs (Reddit, YouTube). If you've manually configured a DoH provider in your
+                browser, those queries bypass the proxy and are not counted.
+            </p>
+            <p style="font-size:12px;color:#6c757d;margin-bottom:14px;">
+                <strong>Foreground</strong> measures time the active browser tab was on a configured domain.
+                macOS-only; opt-in via <code>settings.enable_foreground_tracking</code>; works under any
+                enforcement mode (including <strong>hosts</strong>); ignores background tabs and idle periods.
             </p>
             <div class="usage-range-row" id="usageRangeRow">
                 <span style="font-size:12px;font-weight:600;color:#6c757d;">Range:</span>
@@ -1710,14 +1715,20 @@ async function loadUsage() {
             return;
         }
 
-        var groups  = (data.groups  || []).sort(function(a,b){ return b.used_minutes - a.used_minutes; });
-        var domains = (data.domains || []).sort(function(a,b){ return b.used_minutes - a.used_minutes; });
+        // Sort: rows with the most signal first — prefer the larger of used vs.
+        // foreground so a hosts-mode user (foreground only) still sees a useful order.
+        function sortKey(row) {
+            return Math.max(row.used_minutes || 0, row.foreground_minutes || 0);
+        }
+        var groups  = (data.groups  || []).sort(function(a,b){ return sortKey(b) - sortKey(a); });
+        var domains = (data.domains || []).sort(function(a,b){ return sortKey(b) - sortKey(a); });
 
         var html = '';
 
         if (groups.length === 0 && domains.length === 0) {
             html = '<p style="color:#adb5bd;font-size:13px;">No usage data for this range. ' +
-                'Usage tracking requires dns or strict enforcement mode.</p>';
+                'DNS-based usage requires dns or strict enforcement mode; foreground tracking ' +
+                'requires <code>enable_foreground_tracking: true</code> on macOS.</p>';
         } else {
             if (groups.length > 0) {
                 html += '<div class="section-title" style="margin-bottom:8px;">Groups</div>';
@@ -1725,23 +1736,31 @@ async function loadUsage() {
                     var quotaCell = g.quota_minutes
                         ? '<td class="usage-mins">' + g.quota_minutes + '</td>'
                         : '<td style="color:#adb5bd">—</td>';
+                    var fgCell = (g.foreground_minutes && g.foreground_minutes > 0)
+                        ? '<td class="usage-mins">' + g.foreground_minutes + '</td>'
+                        : '<td style="color:#adb5bd">—</td>';
                     return '<tr><td style="font-weight:600">' + escapeHtml(g.group) + '</td>' +
-                        '<td class="usage-mins">' + g.used_minutes + '</td>' + quotaCell + '</tr>';
+                        '<td class="usage-mins">' + (g.used_minutes || 0) + '</td>' +
+                        fgCell + quotaCell + '</tr>';
                 }).join('');
                 html += '<table class="usage-table" style="margin-bottom:20px;">' +
-                    '<thead><tr><th>Group</th><th>Used (min)</th><th>Quota (min)</th></tr></thead>' +
+                    '<thead><tr><th>Group</th><th>Used (min)</th><th>Foreground (min)</th><th>Quota (min)</th></tr></thead>' +
                     '<tbody>' + gRows + '</tbody></table>';
             }
 
             if (domains.length > 0) {
                 html += '<div class="section-title" style="margin-bottom:8px;">Domains</div>';
                 var dRows = domains.map(function(d) {
+                    var fgCell = (d.foreground_minutes && d.foreground_minutes > 0)
+                        ? '<td class="usage-mins">' + d.foreground_minutes + '</td>'
+                        : '<td style="color:#adb5bd">—</td>';
                     return '<tr><td style="font-family:monospace">' + escapeHtml(d.domain) + '</td>' +
                         '<td style="color:#6c757d">' + escapeHtml(d.group || '—') + '</td>' +
-                        '<td class="usage-mins">' + d.used_minutes + '</td></tr>';
+                        '<td class="usage-mins">' + (d.used_minutes || 0) + '</td>' +
+                        fgCell + '</tr>';
                 }).join('');
                 html += '<table class="usage-table">' +
-                    '<thead><tr><th>Domain</th><th>Group</th><th>Used (min)</th></tr></thead>' +
+                    '<thead><tr><th>Domain</th><th>Group</th><th>Used (min)</th><th>Foreground (min)</th></tr></thead>' +
                     '<tbody>' + dRows + '</tbody></table>';
             }
         }

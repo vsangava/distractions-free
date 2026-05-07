@@ -577,11 +577,16 @@ func UsageHandler(w http.ResponseWriter, r *http.Request) {
 
 	cfg := config.GetConfig()
 
-	// Per-group totals.
+	// Per-group totals. used_minutes comes from DNS-kind events bucketed in
+	// 5-minute windows (preserves existing semantics + quota signal).
+	// foreground_minutes comes from foreground-kind events bucketed in 1-minute
+	// windows — naturally minute-granular because the scheduler ticks each
+	// minute and emits at most one foreground event per tick.
 	type groupRow struct {
-		Group        string `json:"group"`
-		UsedMinutes  int    `json:"used_minutes"`
-		QuotaMinutes int    `json:"quota_minutes,omitempty"`
+		Group              string `json:"group"`
+		UsedMinutes        int    `json:"used_minutes"`
+		ForegroundMinutes  int    `json:"foreground_minutes,omitempty"`
+		QuotaMinutes       int    `json:"quota_minutes,omitempty"`
 	}
 	groupMap := make(map[string]*groupRow)
 	for _, rule := range cfg.Rules {
@@ -590,51 +595,83 @@ func UsageHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Per-domain totals using 5-min bucket deduplication.
 	type domainRow struct {
-		Domain      string `json:"domain"`
-		Group       string `json:"group"`
-		UsedMinutes int    `json:"used_minutes"`
+		Domain             string `json:"domain"`
+		Group              string `json:"group"`
+		UsedMinutes        int    `json:"used_minutes"`
+		ForegroundMinutes  int    `json:"foreground_minutes,omitempty"`
 	}
-	domainBuckets := make(map[string]map[int64]struct{}) // domain → set of bucket keys
-	groupBuckets := make(map[string]map[int64]struct{})  // group → set of bucket keys
+	// DNS-kind aggregations: 5-minute buckets per domain/group.
+	dnsDomainBuckets := make(map[string]map[int64]struct{})
+	dnsGroupBuckets := make(map[string]map[int64]struct{})
+	// Foreground-kind aggregations: 1-minute buckets per domain/group.
+	fgDomainBuckets := make(map[string]map[int64]struct{})
+	fgGroupBuckets := make(map[string]map[int64]struct{})
 
 	for _, e := range events {
+		if e.Kind == proxy.KindForeground {
+			bk := e.TS.Unix() / 60
+			if fgDomainBuckets[e.Domain] == nil {
+				fgDomainBuckets[e.Domain] = make(map[int64]struct{})
+			}
+			fgDomainBuckets[e.Domain][bk] = struct{}{}
+			if fgGroupBuckets[e.Group] == nil {
+				fgGroupBuckets[e.Group] = make(map[int64]struct{})
+			}
+			fgGroupBuckets[e.Group][bk] = struct{}{}
+			continue
+		}
+		// DNS or legacy (empty Kind).
 		bk := e.TS.Unix() / 300
-		if domainBuckets[e.Domain] == nil {
-			domainBuckets[e.Domain] = make(map[int64]struct{})
+		if dnsDomainBuckets[e.Domain] == nil {
+			dnsDomainBuckets[e.Domain] = make(map[int64]struct{})
 		}
-		domainBuckets[e.Domain][bk] = struct{}{}
-		if groupBuckets[e.Group] == nil {
-			groupBuckets[e.Group] = make(map[int64]struct{})
+		dnsDomainBuckets[e.Domain][bk] = struct{}{}
+		if dnsGroupBuckets[e.Group] == nil {
+			dnsGroupBuckets[e.Group] = make(map[int64]struct{})
 		}
-		groupBuckets[e.Group][bk] = struct{}{}
+		dnsGroupBuckets[e.Group][bk] = struct{}{}
 	}
 
-	// Populate group rows.
-	for group, buckets := range groupBuckets {
+	// Populate group rows from DNS buckets.
+	for group, buckets := range dnsGroupBuckets {
 		if row, ok := groupMap[group]; ok {
 			row.UsedMinutes = len(buckets) * 5
 		} else {
 			groupMap[group] = &groupRow{Group: group, UsedMinutes: len(buckets) * 5}
 		}
 	}
+	for group, buckets := range fgGroupBuckets {
+		if row, ok := groupMap[group]; ok {
+			row.ForegroundMinutes = len(buckets)
+		} else {
+			groupMap[group] = &groupRow{Group: group, ForegroundMinutes: len(buckets)}
+		}
+	}
 	groups := make([]groupRow, 0, len(groupMap))
 	for _, row := range groupMap {
-		if row.UsedMinutes > 0 || row.QuotaMinutes > 0 {
+		if row.UsedMinutes > 0 || row.ForegroundMinutes > 0 || row.QuotaMinutes > 0 {
 			groups = append(groups, *row)
 		}
 	}
 
-	// Build per-domain rows.
-	domainRows := make([]domainRow, 0, len(domainBuckets))
-	// Build domain→group from config for labelling.
+	// Build per-domain rows. Union of DNS + foreground domain keys so domains
+	// that show up only as foreground events (e.g. hosts mode) still appear.
 	gl := scheduler.BuildGroupLookup(cfg)
-	for domain, buckets := range domainBuckets {
+	domainKeys := make(map[string]struct{})
+	for d := range dnsDomainBuckets {
+		domainKeys[d] = struct{}{}
+	}
+	for d := range fgDomainBuckets {
+		domainKeys[d] = struct{}{}
+	}
+	domainRows := make([]domainRow, 0, len(domainKeys))
+	for domain := range domainKeys {
 		domainRows = append(domainRows, domainRow{
-			Domain:      domain,
-			Group:       gl[domain],
-			UsedMinutes: len(buckets) * 5,
+			Domain:             domain,
+			Group:              gl[domain],
+			UsedMinutes:        len(dnsDomainBuckets[domain]) * 5,
+			ForegroundMinutes:  len(fgDomainBuckets[domain]),
 		})
 	}
 

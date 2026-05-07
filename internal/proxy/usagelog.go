@@ -10,11 +10,36 @@ import (
 	"github.com/vsangava/sentinel/internal/config"
 )
 
-// UsageEvent records a single DNS lookup for a domain in a known group.
+// UsageEvent records a single observation that a domain in a known group was
+// touched by the user. Two flavours coexist in the same JSONL log:
+//
+//   - Kind == "" (legacy) or "dns": one entry per DNS lookup. Aggregated into
+//     5-minute buckets — feeds the existing used_minutes / quota signal.
+//   - Kind == "foreground": one entry per scheduler tick where the active
+//     browser tab matched a configured group. Aggregated into 1-minute buckets
+//     — feeds foreground_minutes. macOS-only.
+//
+// The empty-string default for Kind is intentional — it keeps every entry that
+// existed before foreground tracking was introduced parsing as DNS without a
+// migration step.
 type UsageEvent struct {
 	TS     time.Time `json:"ts"`
 	Domain string    `json:"domain"`
 	Group  string    `json:"group"`
+	Kind   string    `json:"kind,omitempty"`
+}
+
+// Usage event Kind constants. Empty Kind on an existing event is equivalent to
+// KindDNS for backwards compatibility.
+const (
+	KindDNS        = "dns"
+	KindForeground = "foreground"
+)
+
+// IsDNSKind reports whether a UsageEvent should count toward DNS-bucket usage.
+// Treats the legacy empty Kind as DNS so pre-feature events keep aggregating.
+func (e UsageEvent) IsDNSKind() bool {
+	return e.Kind == "" || e.Kind == KindDNS
 }
 
 func usageFilePath() string {
@@ -108,13 +133,18 @@ func bucketKey(t time.Time) int64 {
 
 // ComputeGroupUsageMinutes returns the number of minutes a group was actively
 // used on the calendar day containing t, derived from the provided events.
-// Usage is measured in distinct 5-minute buckets × 5 minutes.
+// Usage is measured in distinct 5-minute buckets × 5 minutes. Only DNS-kind
+// events count — foreground events live alongside in the same log but are
+// aggregated separately via ComputeGroupForegroundMinutes.
 func ComputeGroupUsageMinutes(events []UsageEvent, group string, t time.Time) int {
 	dayStart := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
 	dayEnd := dayStart.Add(24 * time.Hour)
 
 	buckets := make(map[int64]struct{})
 	for _, e := range events {
+		if !e.IsDNSKind() {
+			continue
+		}
 		if e.Group != group {
 			continue
 		}
@@ -134,4 +164,35 @@ func ComputeAllGroupUsageMinutes(events []UsageEvent, groups []string, t time.Ti
 		result[g] = ComputeGroupUsageMinutes(events, g, t)
 	}
 	return result
+}
+
+// minuteBucketKey returns the 1-minute bucket for a timestamp. Foreground
+// observations are minute-granular by construction (one per scheduler tick),
+// so 5-minute bucketing would only obscure the signal.
+func minuteBucketKey(t time.Time) int64 {
+	return t.Unix() / 60
+}
+
+// ComputeGroupForegroundMinutes returns minutes spent with the foreground
+// browser tab on a domain in `group`, for the calendar day containing t.
+// Counts distinct 1-minute buckets — duplicate observations within the same
+// minute (shouldn't happen, but harmless) collapse to a single tick.
+func ComputeGroupForegroundMinutes(events []UsageEvent, group string, t time.Time) int {
+	dayStart := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+	dayEnd := dayStart.Add(24 * time.Hour)
+
+	buckets := make(map[int64]struct{})
+	for _, e := range events {
+		if e.Kind != KindForeground {
+			continue
+		}
+		if e.Group != group {
+			continue
+		}
+		if e.TS.Before(dayStart) || !e.TS.Before(dayEnd) {
+			continue
+		}
+		buckets[minuteBucketKey(e.TS)] = struct{}{}
+	}
+	return len(buckets)
 }

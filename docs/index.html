@@ -284,6 +284,15 @@
           <p class="text-slate-400 text-sm leading-relaxed">Cap how long a group is accessible each day. Add <code class="text-sky-400 text-xs">daily_quota_minutes: 30</code> to any rule — once the allowance is consumed, the group blocks for the rest of the day. Requires DNS or strict mode.</p>
         </div>
 
+        <!-- Feature: Foreground tab time tracking -->
+        <div class="bg-[#161616] border border-slate-800 rounded-2xl p-6 hover:border-sky-500/40 transition-colors">
+          <div class="w-10 h-10 rounded-xl bg-sky-500/10 flex items-center justify-center mb-4">
+            <svg class="w-5 h-5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2a4 4 0 014-4h6m0 0l-3-3m3 3l-3 3M5 21h12a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+          </div>
+          <h3 class="text-white font-semibold mb-2">Foreground time tracking</h3>
+          <p class="text-slate-400 text-sm leading-relaxed">Opt-in metric for "how long was this site actually the active tab" — idle-aware, ignores background tabs, only logs sites you've already configured. Works under any enforcement mode, including <code class="text-sky-400 text-xs">hosts</code>. macOS, Chrome / Safari / Arc / Brave.</p>
+        </div>
+
         <!-- Feature: Focus sessions / Pomodoro -->
         <div class="bg-[#161616] border border-slate-800 rounded-2xl p-6 hover:border-sky-500/40 transition-colors">
           <div class="w-10 h-10 rounded-xl bg-sky-500/10 flex items-center justify-center mb-4">

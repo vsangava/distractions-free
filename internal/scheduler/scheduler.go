@@ -552,6 +552,21 @@ func evaluateRules() {
 	// with browsers, and probing for them wastes osascript work.
 	runPerTickCloseTabs(newBlocked, cfg, browserTabProbe)
 
+	// Per-tick foreground-tab tracker. Off by default; opt-in via
+	// settings.enable_foreground_tracking. Independent of enforcement_mode —
+	// works under hosts/dns/strict alike, and is the only per-domain time signal
+	// available in hosts mode (no DNS proxy → no DNS-bucket usage events).
+	if cfg.Settings.EnableForegroundTracking {
+		event, ok, err := recordForegroundTick(now, cfg, runForegroundProbe, gl)
+		if err != nil {
+			log.Printf("scheduler: foreground probe: %v", err)
+		} else if ok {
+			if err := proxy.AppendUsageEvent(event); err != nil {
+				log.Printf("scheduler: append foreground usage: %v", err)
+			}
+		}
+	}
+
 	// Log block/unblock events grouped by config group.
 	if len(newlyBlocked) > 0 || len(newlyUnblocked) > 0 {
 		blockedSet := make(map[string]bool, len(newlyBlocked))
