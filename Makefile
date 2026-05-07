@@ -2,6 +2,7 @@
 
 VERSION ?= dev
 BINARY_NAME := sentinel
+LDFLAGS := -X github.com/vsangava/sentinel/internal/version.Version=$(VERSION)
 
 help:
 	@echo "📦 Sentinel Build Commands"
@@ -27,25 +28,25 @@ help:
 
 # Build for current OS
 build:
-	@echo "🔨 Building $(BINARY_NAME) for current OS..."
-	go build -o $(BINARY_NAME) ./cmd/app
+	@echo "🔨 Building $(BINARY_NAME) for current OS (version=$(VERSION))..."
+	go build -ldflags "$(LDFLAGS)" -o $(BINARY_NAME) ./cmd/app
 	@echo "✅ Built: $(BINARY_NAME)"
 
 # Build for all platforms
 build-all: clean
-	@echo "🔨 Building for all platforms..."
+	@echo "🔨 Building for all platforms (version=$(VERSION))..."
 	@echo ""
-	
+
 	@echo "  → macOS ARM64 (Apple Silicon)..."
-	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -o $(BINARY_NAME)-macos-arm64 ./cmd/app
+	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o $(BINARY_NAME)-macos-arm64 ./cmd/app
 	@echo "     ✅ $(BINARY_NAME)-macos-arm64"
-	
+
 	@echo "  → macOS x86_64 (Intel)..."
-	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -o $(BINARY_NAME)-macos-amd64 ./cmd/app
+	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o $(BINARY_NAME)-macos-amd64 ./cmd/app
 	@echo "     ✅ $(BINARY_NAME)-macos-amd64"
-	
+
 	@echo "  → Windows x86_64..."
-	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o $(BINARY_NAME)-windows-amd64.exe ./cmd/app
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o $(BINARY_NAME)-windows-amd64.exe ./cmd/app
 	@echo "     ✅ $(BINARY_NAME)-windows-amd64.exe"
 	@echo ""
 

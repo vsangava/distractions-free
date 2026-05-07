@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/vsangava/sentinel/internal/config"
+	"github.com/vsangava/sentinel/internal/version"
 )
 
 func TestMain(m *testing.M) {
@@ -27,6 +28,30 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)
+}
+
+func TestVersionHandler_ReturnsCurrentVersion(t *testing.T) {
+	orig := version.Version
+	version.Version = "v9.9.9-test"
+	defer func() { version.Version = orig }()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/version", nil)
+	rr := httptest.NewRecorder()
+	VersionHandler(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rr.Code)
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("expected Content-Type application/json, got %s", ct)
+	}
+	var body map[string]string
+	if err := json.NewDecoder(rr.Body).Decode(&body); err != nil {
+		t.Fatalf("response not valid JSON: %v", err)
+	}
+	if body["version"] != "v9.9.9-test" {
+		t.Errorf("expected version v9.9.9-test, got %q", body["version"])
+	}
 }
 
 func TestConfigHandler_ReturnsJSON(t *testing.T) {

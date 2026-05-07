@@ -162,7 +162,7 @@ Most users should leave the default `hosts` mode and skip this step. See [Enforc
 
 ## The web dashboard
 
-Open **`http://localhost:8040`** while the service is running.
+Open **`http://localhost:8040`** while the service is running. The header displays the running version (e.g. `v0.1.19`) — handy for confirming whether a release update has actually rolled over to the live daemon.
 
 **Status tab** shows what's blocked right now, the current enforcement mode, and a timeline of upcoming block and unblock events for the next 24 hours. A good way to sanity-check that your schedule is doing what you expect.
 

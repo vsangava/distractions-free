@@ -38,7 +38,8 @@ jobs:
           go-version-file: go.mod
 
       - name: Build Binary
-        run: go build -o ${{ matrix.output_name }} ./cmd/app
+        shell: bash
+        run: go build -ldflags "-X github.com/vsangava/sentinel/internal/version.Version=${{ github.ref_name }}" -o ${{ matrix.output_name }} ./cmd/app
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}

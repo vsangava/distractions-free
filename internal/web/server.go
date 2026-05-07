@@ -18,6 +18,7 @@ import (
 	"github.com/vsangava/sentinel/internal/proxy"
 	"github.com/vsangava/sentinel/internal/scheduler"
 	"github.com/vsangava/sentinel/internal/testcli"
+	"github.com/vsangava/sentinel/internal/version"
 )
 
 const maxPauseMinutes = 240 // 4 hours
@@ -32,8 +33,10 @@ const (
 //go:embed static/*
 var webFiles embed.FS
 
-// authMiddleware rejects requests to /api/* (except GET /api/config) without a valid X-Auth-Token.
-// GET /api/config is intentionally public so the web UI can bootstrap the token on first load.
+// authMiddleware rejects requests to /api/* without a valid X-Auth-Token. The
+// only routes wired up without it are GET /api/config (public so the web UI
+// can bootstrap the token on first load) and GET /api/version (public so the
+// dashboard can render the version pill before bootstrap completes).
 func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		cfg := config.GetConfig()
@@ -45,6 +48,13 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	}
+}
+
+// VersionHandler returns the running binary's version string. Public (no auth) so
+// the dashboard can display it before the auth token is bootstrapped from /api/config.
+func VersionHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"version": version.Version})
 }
 
 // ConfigHandler returns the current config as JSON, reloading from disk first so the
@@ -690,6 +700,7 @@ func StartWebServer() {
 
 	mux := http.NewServeMux()
 	mux.Handle("/", staticHandler)
+	mux.HandleFunc("/api/version", VersionHandler)
 	mux.HandleFunc("/api/config", ConfigHandler)
 	mux.HandleFunc("/api/status", authMiddleware(StatusHandler))
 	mux.HandleFunc("/api/test-query", authMiddleware(TestQueryHandler))
@@ -742,6 +753,7 @@ func StartTestWebServer() {
 
 	mux := http.NewServeMux()
 	mux.Handle("/", staticHandler)
+	mux.HandleFunc("/api/version", VersionHandler)
 	mux.HandleFunc("/api/config", ConfigHandler)
 	mux.HandleFunc("/api/status", authMiddleware(StatusHandler))
 	mux.HandleFunc("/api/test-query", authMiddleware(TestQueryHandler))
