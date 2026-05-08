@@ -774,3 +774,25 @@ Verified end-to-end by writing a one-shot test that calls `MacOSForegroundProbeG
 One extra `osascript` process per tick when a supported browser is frontmost. Negligible — the per-tick close path already shells out, this is one more, and only when the user is using a tracked browser.
 
 **Wrap-up:** Both PRs ([#100](https://github.com/vsangava/sentinel/pull/100), [#101](https://github.com/vsangava/sentinel/pull/101)) merged to `main`; tag `v0.1.20` pushed and the release workflow published `sentinel-macos-arm64`, `sentinel-macos-amd64`, `sentinel-windows-amd64.exe`, and `install.sh` to <https://github.com/vsangava/sentinel/releases/tag/v0.1.20>. Foreground tracking is now actually functional in the released build for any macOS install with at least one of the four supported browsers, not just installs that happen to have all four. Users on v0.1.18/v0.1.19 with `enable_foreground_tracking: true` need to upgrade — the metric was producing zero data on most machines.
+
+## May 7 — Hide DoH endpoints in dashboard blocked list (issue #97) → v0.1.21
+**Session ID:** `feat-issue-97-hide-doh` · **PR:** [#103](https://github.com/vsangava/sentinel/pull/103)
+
+**Opening prompt:**
+> "did you not start issue 97?"
+
+**What happened:**
+
+Picked up #97 from the previous session's backlog: the dashboard's currently-blocked list dumped all ~11 `_doh` endpoints alongside user-scheduled domains, drowning out the rule-driven blocks the user actually cared about. Pure client-side fix in `internal/web/static/index.html` — `loadStatus()` now partitions `data.blocked_domains` against `liveConfig.groups._doh`, renders user sites in the existing red list, and tucks DoH endpoints into a collapsed `<details>` expander with summary text like *"11 DoH/DoT endpoints (infrastructure — click to expand)"*. Three empty-state branches: nothing-blocked, only-DoH-blocked (`✓ No scheduled domains currently blocked`), and the mixed case. No new API surface — both the blocked map and the DoH list are already exposed by `/api/status` and `/api/config`, and `loadStatus` is invoked through `loadConfig().then(loadStatus)` so `liveConfig` is always populated by the time the partition runs.
+
+**Verification gotcha — the user's local config has no `_doh` group.**
+
+After landing the change I told the user it was ready; they refreshed and reported "I tried and don't see a summary text". Spent a fair bit of time tracing why before realizing their working `./config.json` only has `games`, `videos`, `social` — no `_doh` group at all. With no DoH list to filter against, `dohBlocked` is empty and the expander correctly omits itself, so the dashboard looked unchanged. Issue #97 was filed against a config that did have `_doh` (the bundled `default_config.json` ships one with an always-on rule). The "fail-open when there's no `_doh`" behaviour is correct, but it meant my live test against the user's setup was a no-op — couldn't prove the partition worked just by curling against their config.
+
+Killed the running daemon, mkdir'd `/tmp/df-test`, dropped a synthetic config there with `_doh` populated + an active rule, and ran `/tmp/sentinel-issue97 --local` from that directory so the daemon picked up the synthetic config without touching the repo's `config.json`. `/api/status` then returned 13 blocks (2 user + 11 DoH) and the dashboard rendered the expander as expected. Pointed the user at `127.0.0.1:8040` for a hard-refresh visual check — they confirmed it worked.
+
+**UI tweak — chevron sized to match the red dot.**
+
+User came back: "the chevron is too small / invisible. can you make it same size as the red dot that is shown in front of blocked domain names". Original implementation used a Unicode `▸` glyph at `font-size: 10px` — visible but thin and a bit anaemic next to the solid 7px red dot in the blocked list. Swapped it for a CSS-drawn triangle (the standard `border-top/bottom: 4px transparent + border-left: 7px solid #6c757d` recipe), `flex-shrink: 0` so it doesn't squeeze when the summary text wraps, and the existing `transform: rotate(90deg)` on `[open]` still works for the expansion animation. Visual weight now matches the dot.
+
+**Wrap-up:** PR [#103](https://github.com/vsangava/sentinel/pull/103) merged to `main`; tag `v0.1.21` pushed and the release workflow published `sentinel-macos-arm64`, `sentinel-macos-amd64`, `sentinel-windows-amd64.exe`, and `install.sh` to <https://github.com/vsangava/sentinel/releases/tag/v0.1.21>. The dashboard's blocked list now reflects what users actually want to see — scheduled sites foregrounded, infrastructure tucked away one click deep.
