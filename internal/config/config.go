@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -116,16 +117,30 @@ var (
 	// so parallel test packages don't race on the repo-rooted ./config.json
 	// (and don't reformat it as a side effect).
 	ConfigDirOverride string
+	// activeProfile is the name of the profile whose rules currently populate
+	// AppConfig.Rules. Held under mu like AppConfig.
+	activeProfile string
 )
 
-func GetConfigFilePath() (string, error) {
+// ActiveProfile returns the name of the profile whose rules currently populate
+// the in-memory Config.
+func ActiveProfile() string {
+	mu.RLock()
+	defer mu.RUnlock()
+	return activeProfile
+}
+
+// EnsureConfigDir creates the OS-specific config directory if it does not
+// already exist. Callers do not need this for normal Load/Save flows — the
+// helpers in this package create directories on demand — but it is exposed
+// for tests and one-shot CLI tools that want to fail fast on a permissions
+// problem.
+func EnsureConfigDir() error {
 	dir := configDir()
-	if dir != "." {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return "", err
-		}
+	if dir == "." {
+		return nil
 	}
-	return filepath.Join(dir, "config.json"), nil
+	return os.MkdirAll(dir, 0755)
 }
 
 // configDir resolves the directory that should hold config.json.
@@ -155,34 +170,232 @@ func generateToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+// LoadConfig reads the on-disk bootstrap + active profile and merges them
+// into the in-memory AppConfig. On a fresh install (neither file present) it
+// seeds the defaults. Legacy single-file config.json deployments are migrated
+// transparently on first call; the legacy file is renamed to config.json.bak.
+//
+// Auth tokens are generated and persisted on first run so the dashboard has a
+// stable bearer token from boot.
 func LoadConfig() error {
-	path, err := GetConfigFilePath()
-	if err != nil {
+	if err := EnsureConfigDir(); err != nil {
 		return err
 	}
+	if _, err := migrateLegacyConfigIfNeeded(); err != nil {
+		return fmt.Errorf("legacy config migration: %w", err)
+	}
+
 	mu.Lock()
 	defer mu.Unlock()
 
-	data, err := os.ReadFile(path)
+	boot, err := loadBootstrap()
 	if err != nil {
 		if os.IsNotExist(err) {
-			return saveDefaultConfig(path)
+			return seedDefaultsLocked()
 		}
 		return err
 	}
-	if err := json.Unmarshal(data, &AppConfig); err != nil {
-		return err
-	}
-	if AppConfig.Settings.AuthToken == "" {
+
+	tokenWasGenerated := false
+	if boot.Settings.AuthToken == "" {
 		token, err := generateToken()
 		if err != nil {
 			return err
 		}
-		AppConfig.Settings.AuthToken = token
-		updated, _ := json.MarshalIndent(AppConfig, "", "  ")
-		os.WriteFile(path, updated, 0644)
+		boot.Settings.AuthToken = token
+		tokenWasGenerated = true
+	}
+	if boot.ActiveProfile == "" {
+		boot.ActiveProfile = DefaultProfileName
+	}
+
+	prof, err := loadProfile(boot.ActiveProfile)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		// Active profile points at a missing file. Fall back to "default";
+		// if that's also missing, write an empty profile so the daemon stays
+		// up and the user can recover via the dashboard.
+		log.Printf("config: active profile %q missing on disk, falling back to %q",
+			boot.ActiveProfile, DefaultProfileName)
+		boot.ActiveProfile = DefaultProfileName
+		prof, err = loadProfile(DefaultProfileName)
+		if err != nil {
+			if !os.IsNotExist(err) {
+				return err
+			}
+			prof = ProfileFile{Rules: nil}
+			if err := saveProfile(DefaultProfileName, prof); err != nil {
+				return err
+			}
+		}
+		if err := saveBootstrap(boot); err != nil {
+			return err
+		}
+	} else if tokenWasGenerated {
+		if err := saveBootstrap(boot); err != nil {
+			return err
+		}
+	}
+
+	AppConfig = mergeBootstrapAndProfile(boot, prof)
+	activeProfile = boot.ActiveProfile
+	return nil
+}
+
+// mergeBootstrapAndProfile produces the in-memory Config consumed by the
+// scheduler/proxy/enforcer. Keeping this view identical to the pre-profiles
+// shape lets every downstream package stay untouched.
+func mergeBootstrapAndProfile(b BootstrapFile, p ProfileFile) Config {
+	return Config{
+		Settings: b.Settings,
+		Groups:   b.Groups,
+		Rules:    p.Rules,
+		Pause:    b.Pause,
+		Pomodoro: b.Pomodoro,
+	}
+}
+
+// splitConfigForDisk is the inverse of mergeBootstrapAndProfile. It also
+// records which profile name to write to.
+func splitConfigForDisk(c Config, activeProfile string) (BootstrapFile, ProfileFile) {
+	if activeProfile == "" {
+		activeProfile = DefaultProfileName
+	}
+	return BootstrapFile{
+			Settings:      c.Settings,
+			Groups:        c.Groups,
+			Pause:         c.Pause,
+			Pomodoro:      c.Pomodoro,
+			ActiveProfile: activeProfile,
+		}, ProfileFile{
+			Rules: c.Rules,
+		}
+}
+
+// ListProfiles returns the names of every profile on disk, sorted.
+func ListProfiles() ([]string, error) {
+	return listProfiles()
+}
+
+// ProfileExists reports whether profiles/<name>.json exists.
+func ProfileExists(name string) (bool, error) {
+	if err := ValidateProfileName(name); err != nil {
+		return false, err
+	}
+	_, err := os.Stat(profilePath(name))
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
+}
+
+// CreateProfile writes profiles/<name>.json. If cloneFrom is non-empty, the
+// new profile copies its rules from the named profile; otherwise it starts
+// with an empty rule set. Returns an error if the name is invalid, the
+// profile already exists, or cloneFrom is set but missing.
+func CreateProfile(name, cloneFrom string) error {
+	if err := ValidateProfileName(name); err != nil {
+		return err
+	}
+	exists, err := ProfileExists(name)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return fmt.Errorf("profile %q already exists", name)
+	}
+
+	var prof ProfileFile
+	if cloneFrom != "" {
+		if err := ValidateProfileName(cloneFrom); err != nil {
+			return fmt.Errorf("clone_from: %w", err)
+		}
+		src, err := loadProfile(cloneFrom)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return fmt.Errorf("clone_from profile %q does not exist", cloneFrom)
+			}
+			return err
+		}
+		prof = src
+	}
+	return saveProfile(name, prof)
+}
+
+// DeleteProfile removes profiles/<name>.json. Returns an error if name is
+// invalid, the profile does not exist, or the profile is currently active.
+func DeleteProfile(name string) error {
+	if err := ValidateProfileName(name); err != nil {
+		return err
+	}
+	if name == ActiveProfile() {
+		return fmt.Errorf("cannot delete active profile %q", name)
+	}
+	if name == DefaultProfileName {
+		return fmt.Errorf("cannot delete the default profile")
+	}
+	if err := os.Remove(profilePath(name)); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("profile %q does not exist", name)
+		}
+		return err
 	}
 	return nil
+}
+
+// SwitchProfile changes the active profile in the bootstrap file, then
+// reloads the in-memory config so the next scheduler tick (or any reader)
+// sees the new rules. Returns an error if name is invalid or the profile
+// file does not exist.
+func SwitchProfile(name string) error {
+	if err := ValidateProfileName(name); err != nil {
+		return err
+	}
+	exists, err := ProfileExists(name)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("profile %q does not exist", name)
+	}
+
+	boot, err := loadBootstrap()
+	if err != nil {
+		return err
+	}
+	boot.ActiveProfile = name
+	if err := saveBootstrap(boot); err != nil {
+		return err
+	}
+	return LoadConfig()
+}
+
+// ReplaceFullConfig accepts a merged Config (the legacy on-the-wire shape used
+// by /api/config/update) and writes it across the bootstrap + active profile
+// files. The auth token from the existing bootstrap is preserved — callers
+// cannot rotate it through this path. The active profile name is unchanged.
+func ReplaceFullConfig(cfg Config) error {
+	mu.Lock()
+	prof := activeProfile
+	if prof == "" {
+		prof = DefaultProfileName
+	}
+	cfg.Settings.AuthToken = AppConfig.Settings.AuthToken
+	mu.Unlock()
+
+	boot, profFile := splitConfigForDisk(cfg, prof)
+	if err := saveBootstrap(boot); err != nil {
+		return err
+	}
+	if err := saveProfile(prof, profFile); err != nil {
+		return err
+	}
+	return LoadConfig()
 }
 
 // SetEnforcementMode updates the in-memory enforcement mode.
@@ -250,32 +463,50 @@ func ClearPomodoro() {
 	AppConfig.Pomodoro = nil
 }
 
-// SaveConfig writes the current in-memory config to disk.
+// SaveConfig persists the in-memory AppConfig to disk by splitting it across
+// the bootstrap (sentinel.json) and the active profile file. Both writes are
+// atomic individually; the pair is not. A crash between the two leaves the
+// active profile pointing at the most recent rules — acceptable because the
+// scheduler reloads from disk every minute and re-converges.
 func SaveConfig() error {
-	path, err := GetConfigFilePath()
-	if err != nil {
-		return err
-	}
 	mu.RLock()
-	data, err := json.MarshalIndent(AppConfig, "", "  ")
+	cfg := AppConfig
+	prof := activeProfile
 	mu.RUnlock()
-	if err != nil {
+
+	if prof == "" {
+		prof = DefaultProfileName
+	}
+	boot, profFile := splitConfigForDisk(cfg, prof)
+	if err := saveBootstrap(boot); err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+	return saveProfile(prof, profFile)
 }
 
-func saveDefaultConfig(path string) error {
-	if err := json.Unmarshal(defaultConfigBytes, &AppConfig); err != nil {
+// seedDefaultsLocked populates AppConfig from the embedded default config and
+// writes the bootstrap + default profile to disk. Caller must hold mu.
+func seedDefaultsLocked() error {
+	var seed Config
+	if err := json.Unmarshal(defaultConfigBytes, &seed); err != nil {
 		return err
 	}
 	token, err := generateToken()
 	if err != nil {
 		return err
 	}
-	AppConfig.Settings.AuthToken = token
-	data, _ := json.MarshalIndent(AppConfig, "", "  ")
-	return os.WriteFile(path, data, 0644)
+	seed.Settings.AuthToken = token
+
+	boot, prof := splitConfigForDisk(seed, DefaultProfileName)
+	if err := saveBootstrap(boot); err != nil {
+		return err
+	}
+	if err := saveProfile(DefaultProfileName, prof); err != nil {
+		return err
+	}
+	AppConfig = seed
+	activeProfile = DefaultProfileName
+	return nil
 }
 
 func GetConfig() Config {
@@ -289,22 +520,24 @@ const factoryPrimaryDNS = "8.8.8.8:53"
 // AutoSetPrimaryDNS updates primary_dns only when it still holds the factory
 // default. This lets the first dns/strict mode startup capture whatever DNS
 // the user had before Sentinel, without overwriting deliberate user settings.
+//
+// Settings live in the bootstrap, so this writes only sentinel.json.
 func AutoSetPrimaryDNS(server string) {
-	path, err := GetConfigFilePath()
-	if err != nil {
-		return
-	}
 	mu.Lock()
-	defer mu.Unlock()
 	if AppConfig.Settings.PrimaryDNS != factoryPrimaryDNS {
+		mu.Unlock()
 		return
 	}
 	AppConfig.Settings.PrimaryDNS = server
-	data, err := json.MarshalIndent(AppConfig, "", "  ")
-	if err != nil {
-		return
+	cfg := AppConfig
+	prof := activeProfile
+	mu.Unlock()
+
+	if prof == "" {
+		prof = DefaultProfileName
 	}
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	boot, _ := splitConfigForDisk(cfg, prof)
+	if err := saveBootstrap(boot); err != nil {
 		log.Printf("config: could not save auto-detected upstream DNS: %v", err)
 		return
 	}

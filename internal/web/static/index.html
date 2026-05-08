@@ -37,7 +37,6 @@
         .app-header h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.3px; }
         .app-header p  { font-size: 12px; opacity: 0.75; margin-top: 3px; }
         .app-header .version-pill {
-            margin-left: auto;
             font-size: 11px;
             font-weight: 600;
             padding: 4px 10px;
@@ -47,6 +46,88 @@
             letter-spacing: 0.3px;
             font-variant-numeric: tabular-nums;
             white-space: nowrap;
+        }
+        .app-header .header-spacer { flex: 1; }
+        .profile-switcher {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            color: rgba(255, 255, 255, 0.92);
+            letter-spacing: 0.2px;
+        }
+        .profile-switcher label {
+            text-transform: uppercase;
+            font-size: 10px;
+            letter-spacing: 0.6px;
+            opacity: 0.75;
+        }
+        .profile-switcher select {
+            background: rgba(255, 255, 255, 0.18);
+            color: rgba(255, 255, 255, 0.95);
+            border: 1px solid rgba(255, 255, 255, 0.28);
+            border-radius: 12px;
+            padding: 4px 24px 4px 10px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            outline: none;
+            appearance: none;
+            background-image:
+                linear-gradient(45deg, transparent 50%, rgba(255,255,255,0.85) 50%),
+                linear-gradient(135deg, rgba(255,255,255,0.85) 50%, transparent 50%);
+            background-position:
+                calc(100% - 11px) 50%,
+                calc(100% - 7px) 50%;
+            background-size: 4px 4px, 4px 4px;
+            background-repeat: no-repeat;
+        }
+        .profile-switcher select:disabled {
+            opacity: 0.55;
+            cursor: not-allowed;
+        }
+        .profile-switcher select option { color: #212529; }
+        .profile-toast {
+            position: fixed;
+            top: 16px;
+            right: 16px;
+            background: #198754;
+            color: white;
+            padding: 10px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.18);
+            opacity: 0;
+            transform: translateY(-8px);
+            transition: opacity 0.2s, transform 0.2s;
+            pointer-events: none;
+            z-index: 1000;
+        }
+        .profile-toast.visible { opacity: 1; transform: translateY(0); }
+        .profile-toast.error { background: #dc3545; }
+
+        /* Profile management section in Manage tab */
+        .profile-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 12px; }
+        .profile-row {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 8px 12px; border: 1px solid #e9ecef; border-radius: 6px;
+            background: #fafafa; font-size: 13px;
+        }
+        .profile-row.active { border-color: #667eea; background: #f3f4ff; font-weight: 600; }
+        .profile-row .profile-meta {
+            font-size: 11px; color: #6c757d; font-weight: 500;
+        }
+        .profile-row .profile-actions { display: flex; gap: 6px; }
+        .profile-create-row {
+            display: flex; gap: 8px; align-items: center; margin-top: 8px;
+            flex-wrap: wrap;
+        }
+        .profile-create-row input,
+        .profile-create-row select {
+            font-size: 13px; padding: 6px 10px; border: 1px solid #ced4da;
+            border-radius: 6px;
         }
 
         /* Tabs */
@@ -637,8 +718,14 @@
             <h1>Sentinel</h1>
             <p>Schedule-based focus enforcement</p>
         </div>
+        <div class="header-spacer"></div>
+        <div class="profile-switcher" id="profileSwitcher" hidden>
+            <label for="profileDropdown">Profile</label>
+            <select id="profileDropdown" onchange="handleProfileSwitch(this.value)" title="Active blocking profile"></select>
+        </div>
         <span id="versionPill" class="version-pill" title="Running version" hidden></span>
     </div>
+    <div id="profileToast" class="profile-toast" role="status" aria-live="polite"></div>
 
     <div class="tabs">
         <button class="tab-button active" onclick="switchTab('status')">Status</button>
@@ -658,6 +745,7 @@
                 <button class="btn-sm btn-success" onclick="loadStatus()">↻ Refresh</button>
             </div>
             <div id="modeBadge"></div>
+            <div id="profileBadge" style="margin-top:6px;"></div>
             <div id="pauseBanner"></div>
             <div id="statusContent"><p style="color:#adb5bd;font-size:13px;">Loading…</p></div>
             <div class="status-meta" id="statusMeta"></div>
@@ -844,6 +932,22 @@
                 <div id="managePauseContent"><p style="color:#adb5bd;font-size:13px;">Loading…</p></div>
                 <div id="managePauseMsg"></div>
             </div>
+
+            <hr class="section-divider">
+
+            <div class="section">
+                <div class="section-title">Profiles</div>
+                <p style="font-size:12px;color:#6c757d;margin:0 0 10px;">
+                    Each profile is its own set of <em>rules</em>; settings, groups, and pause/pomodoro state are shared. Editing the textarea above writes to the active profile.
+                </p>
+                <div id="manageProfileList" class="profile-list"></div>
+                <div class="profile-create-row">
+                    <input type="text" id="newProfileName" placeholder="profile-name" maxlength="32">
+                    <select id="cloneFromProfile" title="Clone rules from"></select>
+                    <button onclick="createProfile()">Create profile</button>
+                </div>
+                <div id="manageProfileMsg" style="margin-top:8px;"></div>
+            </div>
         </div>
     </div>
 
@@ -924,12 +1028,19 @@ var EXAMPLE_CONFIG = {
     ]
 };
 
+// ── State for profiles ────────────────────────────────────────────────────────
+var profileList   = [];
+var activeProfile = '';
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 window.onload = function() {
     setupPinBoxes();
     setDefaultTestTime();
     loadVersion();
-    loadConfig().then(function() { loadStatus(); });
+    loadConfig().then(function() {
+        loadProfiles();
+        loadStatus();
+    });
 };
 
 async function loadVersion() {
@@ -967,6 +1078,177 @@ async function loadConfig() {
         testConfig = EXAMPLE_CONFIG;
     }
 }
+
+// ── Profiles ──────────────────────────────────────────────────────────────────
+async function loadProfiles() {
+    if (!authToken) return;
+    try {
+        var res = await fetch('/api/profiles', {
+            headers: {'X-Auth-Token': authToken}
+        });
+        if (!res.ok) return;
+        var data = await res.json();
+        profileList   = data.profiles || [];
+        activeProfile = data.active   || '';
+        renderProfileSwitcher();
+        renderManageProfiles();
+    } catch (e) {
+        // Non-fatal — the rest of the dashboard still works without profiles.
+    }
+}
+
+function renderProfileSwitcher() {
+    var wrap = document.getElementById('profileSwitcher');
+    var sel  = document.getElementById('profileDropdown');
+    if (!wrap || !sel) return;
+    if (!profileList.length) {
+        wrap.hidden = true;
+        return;
+    }
+    var html = '';
+    for (var i = 0; i < profileList.length; i++) {
+        var name = profileList[i];
+        var selected = (name === activeProfile) ? ' selected' : '';
+        html += '<option value="' + escapeHtml(name) + '"' + selected + '>' +
+                escapeHtml(name) + '</option>';
+    }
+    sel.innerHTML = html;
+    wrap.hidden = false;
+
+    var badge = document.getElementById('profileBadge');
+    if (badge) {
+        if (activeProfile) {
+            badge.innerHTML =
+                '<span class="mode-badge hosts" style="background:#e9ecef;color:#495057;">' +
+                '⚑ Profile: ' + escapeHtml(activeProfile) + '</span>';
+        } else {
+            badge.innerHTML = '';
+        }
+    }
+}
+
+function setProfileSwitcherDisabled(disabled, reason) {
+    var sel = document.getElementById('profileDropdown');
+    if (!sel) return;
+    sel.disabled = !!disabled;
+    sel.title = disabled ? (reason || 'Disabled') : 'Active blocking profile';
+}
+
+async function handleProfileSwitch(name) {
+    if (!name || name === activeProfile) return;
+    try {
+        var res = await fetch('/api/profile/switch', {
+            method:  'POST',
+            headers: {'X-Auth-Token': authToken, 'Content-Type': 'application/json'},
+            body:    JSON.stringify({name: name})
+        });
+        var data = await res.json();
+        if (!res.ok) {
+            showProfileToast(data.error || 'Failed to switch profile', true);
+            // Revert dropdown to the still-active profile.
+            var sel = document.getElementById('profileDropdown');
+            if (sel) sel.value = activeProfile;
+            return;
+        }
+        activeProfile = name;
+        showProfileToast('Switched to "' + name + '" — applies within 60s');
+        await loadConfig();
+        await loadProfiles();
+        loadStatus();
+    } catch (e) {
+        showProfileToast('Error: ' + e.message, true);
+    }
+}
+
+function showProfileToast(msg, isError) {
+    var t = document.getElementById('profileToast');
+    if (!t) return;
+    t.textContent = msg;
+    t.classList.toggle('error', !!isError);
+    t.classList.add('visible');
+    clearTimeout(showProfileToast._timer);
+    showProfileToast._timer = setTimeout(function() {
+        t.classList.remove('visible');
+    }, 3500);
+}
+
+function renderManageProfiles() {
+    var listEl = document.getElementById('manageProfileList');
+    var cloneEl = document.getElementById('cloneFromProfile');
+    if (!listEl || !cloneEl) return;
+
+    if (!profileList.length) {
+        listEl.innerHTML = '<p style="color:#adb5bd;font-size:13px;">No profiles loaded.</p>';
+        cloneEl.innerHTML = '<option value="">empty (no clone)</option>';
+        return;
+    }
+
+    var rows = profileList.map(function(name) {
+        var isActive = (name === activeProfile);
+        var actions  = isActive
+            ? '<span class="profile-meta">Active</span>'
+            : '<button class="btn-sm btn-success" onclick="handleProfileSwitch(\'' + escapeJs(name) + '\')">Activate</button>' +
+              ' <button class="btn-sm" style="background:#dc3545;color:white;" onclick="deleteProfile(\'' + escapeJs(name) + '\')">Delete</button>';
+        return '<div class="profile-row' + (isActive ? ' active' : '') + '">' +
+               '<span>' + escapeHtml(name) + '</span>' +
+               '<span class="profile-actions">' + actions + '</span>' +
+               '</div>';
+    }).join('');
+    listEl.innerHTML = rows;
+
+    var cloneOpts = '<option value="">empty (no clone)</option>' +
+        profileList.map(function(name) {
+            return '<option value="' + escapeHtml(name) + '">clone from ' + escapeHtml(name) + '</option>';
+        }).join('');
+    cloneEl.innerHTML = cloneOpts;
+}
+
+async function createProfile() {
+    var nameEl  = document.getElementById('newProfileName');
+    var cloneEl = document.getElementById('cloneFromProfile');
+    var name    = (nameEl.value || '').trim();
+    if (!name) { showBanner('manageProfileMsg', 'error', 'Enter a profile name'); return; }
+    var body = {name: name};
+    if (cloneEl.value) body.clone_from = cloneEl.value;
+    try {
+        var res = await fetch('/api/profiles', {
+            method:  'POST',
+            headers: {'X-Auth-Token': authToken, 'Content-Type': 'application/json'},
+            body:    JSON.stringify(body)
+        });
+        var data = await res.json();
+        if (!res.ok) {
+            showBanner('manageProfileMsg', 'error', data.error || 'Create failed');
+            return;
+        }
+        showBanner('manageProfileMsg', 'success', 'Profile "' + name + '" created');
+        nameEl.value = '';
+        await loadProfiles();
+    } catch (e) {
+        showBanner('manageProfileMsg', 'error', 'Error: ' + e.message);
+    }
+}
+
+async function deleteProfile(name) {
+    if (!confirm('Delete profile "' + name + '"? This cannot be undone.')) return;
+    try {
+        var res = await fetch('/api/profiles/' + encodeURIComponent(name), {
+            method:  'DELETE',
+            headers: {'X-Auth-Token': authToken}
+        });
+        var data = await res.json();
+        if (!res.ok) {
+            showBanner('manageProfileMsg', 'error', data.error || 'Delete failed');
+            return;
+        }
+        showBanner('manageProfileMsg', 'success', 'Profile "' + name + '" deleted');
+        await loadProfiles();
+    } catch (e) {
+        showBanner('manageProfileMsg', 'error', 'Error: ' + e.message);
+    }
+}
+
+function escapeJs(s) { return String(s).replace(/'/g, "\\'"); }
 
 function populateModeSelector(cfg) {
     var current = (cfg && cfg.settings && cfg.settings.enforcement_mode) || 'hosts';
@@ -1247,6 +1529,17 @@ async function loadStatus() {
         if (manageUnlocked) renderManagePause(data);
 
         renderPomodoroPanel(data.pomodoro || null);
+
+        // Profile dropdown — refresh active profile, disable during work-phase lock.
+        if (data.active_profile && data.active_profile !== activeProfile) {
+            activeProfile = data.active_profile;
+            renderProfileSwitcher();
+            renderManageProfiles();
+        }
+        setProfileSwitcherDisabled(
+            !!(data.pomodoro && data.pomodoro.locked),
+            'Profile switching is locked during a Pomodoro work session'
+        );
 
     } catch(e) {
         contentEl.innerHTML = '<div class="banner error">Error: ' + e.message + '</div>';

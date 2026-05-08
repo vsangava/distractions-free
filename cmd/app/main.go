@@ -386,6 +386,50 @@ func main() {
 		return
 	}
 
+	// --set-profile changes the active profile and exits. The running daemon
+	// (if any) picks up the new active profile on its next 1-minute scheduler
+	// tick, same as --set-mode.
+	// Usage: sudo ./sentinel --set-profile work
+	if len(os.Args) > 1 && os.Args[1] == "--set-profile" {
+		if len(os.Args) < 3 {
+			log.Fatalf("Usage: %s --set-profile <name>\n", os.Args[0])
+		}
+		name := os.Args[2]
+		if err := config.LoadConfig(); err != nil {
+			log.Fatalf("Failed to load config: %v", err)
+		}
+		if err := config.SwitchProfile(name); err != nil {
+			available, _ := config.ListProfiles()
+			log.Fatalf("Failed to switch profile: %v\nAvailable profiles: %v", err, available)
+		}
+		log.Printf("Active profile set to %q. The daemon will apply within 60 seconds.", name)
+		return
+	}
+
+	// --list-profiles prints every saved profile, marking the active one.
+	if len(os.Args) > 1 && os.Args[1] == "--list-profiles" {
+		if err := config.LoadConfig(); err != nil {
+			log.Fatalf("Failed to load config: %v", err)
+		}
+		names, err := config.ListProfiles()
+		if err != nil {
+			log.Fatalf("Failed to list profiles: %v", err)
+		}
+		active := config.ActiveProfile()
+		if len(names) == 0 {
+			fmt.Println("(no profiles found — first run will create the default)")
+			return
+		}
+		for _, n := range names {
+			marker := "  "
+			if n == active {
+				marker = "* "
+			}
+			fmt.Printf("%s%s\n", marker, n)
+		}
+		return
+	}
+
 	prg := &program{}
 	s, err := service.New(prg, svcConfig)
 	if err != nil {

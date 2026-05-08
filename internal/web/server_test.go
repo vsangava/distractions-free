@@ -504,23 +504,44 @@ func authRequest(method, path string, body []byte) *http.Request {
 
 func setWorkPhase(t *testing.T) {
 	t.Helper()
-	t.Cleanup(func() { config.AppConfig.Pomodoro = nil })
+	// Bootstrap AppConfig from disk (so Settings, Groups, AuthToken, active
+	// profile are all populated) before mutating Pomodoro. Without this, a
+	// subsequent SaveConfig would persist a half-initialized config.
+	if err := config.LoadConfig(); err != nil {
+		t.Fatalf("setWorkPhase: LoadConfig failed: %v", err)
+	}
+	t.Cleanup(func() {
+		config.ClearPomodoro()
+		_ = config.SaveConfig()
+	})
 	config.AppConfig.Pomodoro = &config.PomodoroSession{
 		Phase:        "work",
 		PhaseEndsAt:  time.Now().Add(10 * time.Minute),
 		WorkMinutes:  25,
 		BreakMinutes: 5,
 	}
+	if err := config.SaveConfig(); err != nil {
+		t.Fatalf("setWorkPhase: SaveConfig failed: %v", err)
+	}
 }
 
 func setBreakPhase(t *testing.T) {
 	t.Helper()
-	t.Cleanup(func() { config.AppConfig.Pomodoro = nil })
+	if err := config.LoadConfig(); err != nil {
+		t.Fatalf("setBreakPhase: LoadConfig failed: %v", err)
+	}
+	t.Cleanup(func() {
+		config.ClearPomodoro()
+		_ = config.SaveConfig()
+	})
 	config.AppConfig.Pomodoro = &config.PomodoroSession{
 		Phase:        "break",
 		PhaseEndsAt:  time.Now().Add(5 * time.Minute),
 		WorkMinutes:  25,
 		BreakMinutes: 5,
+	}
+	if err := config.SaveConfig(); err != nil {
+		t.Fatalf("setBreakPhase: SaveConfig failed: %v", err)
 	}
 }
 
@@ -643,5 +664,152 @@ func TestUpdateConfigHandler_LockedDuringWork_Returns423(t *testing.T) {
 
 	if rr.Code != http.StatusLocked {
 		t.Errorf("expected 423, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// ── Profile management tests ──────────────────────────────────────────────────
+
+func TestProfilesList_ReturnsActiveAndProfiles(t *testing.T) {
+	if err := config.LoadConfig(); err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	req := authRequest("GET", "/api/profiles", nil)
+	rr := httptest.NewRecorder()
+	ProfilesListHandler(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var resp map[string]any
+	json.NewDecoder(rr.Body).Decode(&resp)
+	if resp["active"] == nil {
+		t.Errorf("expected active field, got %v", resp)
+	}
+	if _, ok := resp["profiles"].([]any); !ok {
+		t.Errorf("expected profiles array, got %v", resp["profiles"])
+	}
+}
+
+func TestProfilesCreate_NewProfile_201(t *testing.T) {
+	if err := config.LoadConfig(); err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	t.Cleanup(func() { _ = config.DeleteProfile("alpha") })
+
+	body, _ := json.Marshal(map[string]string{"name": "alpha"})
+	req := authRequest("POST", "/api/profiles", body)
+	rr := httptest.NewRecorder()
+	ProfilesCreateHandler(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Errorf("expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestProfilesCreate_DuplicateName_409(t *testing.T) {
+	if err := config.LoadConfig(); err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	t.Cleanup(func() { _ = config.DeleteProfile("dupe") })
+	if err := config.CreateProfile("dupe", ""); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	body, _ := json.Marshal(map[string]string{"name": "dupe"})
+	req := authRequest("POST", "/api/profiles", body)
+	rr := httptest.NewRecorder()
+	ProfilesCreateHandler(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Errorf("expected 409, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestProfilesCreate_InvalidName_400(t *testing.T) {
+	if err := config.LoadConfig(); err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	body, _ := json.Marshal(map[string]string{"name": "Has Spaces"})
+	req := authRequest("POST", "/api/profiles", body)
+	rr := httptest.NewRecorder()
+	ProfilesCreateHandler(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestProfilesDelete_Active_409(t *testing.T) {
+	if err := config.LoadConfig(); err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	req := authRequest("DELETE", "/api/profiles/"+config.ActiveProfile(), nil)
+	rr := httptest.NewRecorder()
+	ProfilesDeleteHandler(rr, req, config.ActiveProfile())
+	if rr.Code != http.StatusConflict {
+		t.Errorf("expected 409, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestProfilesDelete_Missing_404(t *testing.T) {
+	if err := config.LoadConfig(); err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	req := authRequest("DELETE", "/api/profiles/ghost", nil)
+	rr := httptest.NewRecorder()
+	ProfilesDeleteHandler(rr, req, "ghost")
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestProfileSwitch_ChangesActive(t *testing.T) {
+	if err := config.LoadConfig(); err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if err := config.CreateProfile("beta", ""); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = config.SwitchProfile(config.DefaultProfileName)
+		_ = config.DeleteProfile("beta")
+	})
+
+	body, _ := json.Marshal(map[string]string{"name": "beta"})
+	req := authRequest("POST", "/api/profile/switch", body)
+	rr := httptest.NewRecorder()
+	ProfileSwitchHandler(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if config.ActiveProfile() != "beta" {
+		t.Errorf("active profile not updated: got %q", config.ActiveProfile())
+	}
+}
+
+func TestProfileSwitch_LockedDuringWork_423(t *testing.T) {
+	setWorkPhase(t)
+	if err := config.CreateProfile("locked-target", ""); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = config.DeleteProfile("locked-target")
+	})
+
+	body, _ := json.Marshal(map[string]string{"name": "locked-target"})
+	req := authRequest("POST", "/api/profile/switch", body)
+	rr := httptest.NewRecorder()
+	ProfileSwitchHandler(rr, req)
+	if rr.Code != http.StatusLocked {
+		t.Errorf("expected 423, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestProfileSwitch_MissingProfile_400(t *testing.T) {
+	if err := config.LoadConfig(); err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	body, _ := json.Marshal(map[string]string{"name": "nope"})
+	req := authRequest("POST", "/api/profile/switch", body)
+	rr := httptest.NewRecorder()
+	ProfileSwitchHandler(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d: %s", rr.Code, rr.Body.String())
 	}
 }

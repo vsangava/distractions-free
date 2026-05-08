@@ -8,7 +8,6 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
-	"os"
 	"strconv"
 	"time"
 
@@ -151,13 +150,6 @@ func UpdateConfigHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path, err := config.GetConfigFilePath()
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "cannot resolve config path: " + err.Error()})
-		return
-	}
-
 	// Preserve the existing auth token — callers cannot replace it via this endpoint.
 	existing := config.GetConfig()
 	if existing.IsLockedByPomodoro(time.Now()) {
@@ -165,17 +157,12 @@ func UpdateConfigHandler(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": "config changes are locked during a Pomodoro work session"})
 		return
 	}
-	cfg.Settings.AuthToken = existing.Settings.AuthToken
 
-	data, _ := json.MarshalIndent(cfg, "", "  ")
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	// ReplaceFullConfig splits the merged Config across sentinel.json + the
+	// active profile file and reloads in-memory state.
+	if err := config.ReplaceFullConfig(cfg); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": "failed to write config: " + err.Error()})
-		return
-	}
-	if err := config.LoadConfig(); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "config written but reload failed: " + err.Error()})
 		return
 	}
 
@@ -202,6 +189,7 @@ func StatusHandler(w http.ResponseWriter, r *http.Request) {
 		"last_evaluated":   lastEval,
 		"enforcement_mode": cfg.Settings.GetEnforcementMode(),
 		"paused":           cfg.IsPaused(now),
+		"active_profile":   config.ActiveProfile(),
 	}
 	if cfg.Pause != nil {
 		resp["paused_until"] = cfg.Pause.Until.Format(time.RFC3339)
@@ -365,6 +353,154 @@ func PomodoroStopHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// profilesCollectionRouter dispatches /api/profiles to the right handler by
+// HTTP method: GET → list, POST → create.
+func profilesCollectionRouter(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		ProfilesListHandler(w, r)
+	case http.MethodPost:
+		ProfilesCreateHandler(w, r)
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+// profilesItemRouter dispatches /api/profiles/{name}. Only DELETE is meaningful
+// today; GET/PATCH could be added later for inspect/rename.
+func profilesItemRouter(w http.ResponseWriter, r *http.Request) {
+	const prefix = "/api/profiles/"
+	name := r.URL.Path[len(prefix):]
+	if name == "" || name == "/" {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	switch r.Method {
+	case http.MethodDelete:
+		ProfilesDeleteHandler(w, r, name)
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+// ProfilesListHandler returns the names of every profile on disk plus the
+// active profile name. GET only.
+func ProfilesListHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	names, err := config.ListProfiles()
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "failed to list profiles: " + err.Error()})
+		return
+	}
+	if names == nil {
+		names = []string{}
+	}
+	json.NewEncoder(w).Encode(map[string]any{
+		"active":   config.ActiveProfile(),
+		"profiles": names,
+	})
+}
+
+// ProfilesCreateHandler creates a new profile.
+// Body: {"name": "<name>", "clone_from": "<src>" (optional)}
+// 400 on validation error, 409 if the profile already exists, 500 on I/O.
+func ProfilesCreateHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	var body struct {
+		Name      string `json:"name"`
+		CloneFrom string `json:"clone_from"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON: " + err.Error()})
+		return
+	}
+	if err := config.ValidateProfileName(body.Name); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	exists, err := config.ProfileExists(body.Name)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	if exists {
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{"error": "profile already exists"})
+		return
+	}
+	if err := config.CreateProfile(body.Name, body.CloneFrom); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "name": body.Name})
+}
+
+// ProfilesDeleteHandler deletes a profile by name.
+// Path: /api/profiles/{name}. 400 on validation, 404 missing, 409 if active,
+// 500 on I/O.
+func ProfilesDeleteHandler(w http.ResponseWriter, r *http.Request, name string) {
+	w.Header().Set("Content-Type", "application/json")
+	if err := config.ValidateProfileName(name); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	exists, err := config.ProfileExists(name)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	if !exists {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "profile not found"})
+		return
+	}
+	if name == config.ActiveProfile() {
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{"error": "cannot delete the active profile"})
+		return
+	}
+	if err := config.DeleteProfile(name); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "name": name})
+}
+
+// ProfileSwitchHandler atomically changes the active profile and reloads the
+// in-memory config. Body: {"name": "<name>"}. Locked during a Pomodoro work
+// phase (HTTP 423) to mirror /api/pomodoro DELETE and /api/config/update.
+func ProfileSwitchHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON: " + err.Error()})
+		return
+	}
+	if config.GetConfig().IsLockedByPomodoro(time.Now()) {
+		w.WriteHeader(http.StatusLocked)
+		json.NewEncoder(w).Encode(map[string]string{"error": "profile changes are locked during a Pomodoro work session"})
+		return
+	}
+	if err := config.SwitchProfile(body.Name); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "active": body.Name})
 }
 
 // resolveConfig extracts a config from the request body if present, otherwise reloads
@@ -733,6 +869,15 @@ func StartWebServer() {
 	}))
 	mux.HandleFunc("/api/events", authMiddleware(EventsHandler))
 	mux.HandleFunc("/api/usage", authMiddleware(UsageHandler))
+	mux.HandleFunc("/api/profiles", authMiddleware(profilesCollectionRouter))
+	mux.HandleFunc("/api/profiles/", authMiddleware(profilesItemRouter))
+	mux.HandleFunc("/api/profile/switch", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		ProfileSwitchHandler(w, r)
+	}))
 
 	log.Println("Web server starting on http://localhost:8040")
 	if err := http.ListenAndServe("127.0.0.1:8040", mux); err != nil {
@@ -786,6 +931,15 @@ func StartTestWebServer() {
 	}))
 	mux.HandleFunc("/api/events", authMiddleware(EventsHandler))
 	mux.HandleFunc("/api/usage", authMiddleware(UsageHandler))
+	mux.HandleFunc("/api/profiles", authMiddleware(profilesCollectionRouter))
+	mux.HandleFunc("/api/profiles/", authMiddleware(profilesItemRouter))
+	mux.HandleFunc("/api/profile/switch", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		ProfileSwitchHandler(w, r)
+	}))
 
 	log.Println("Test web server starting on http://localhost:8040")
 	if err := http.ListenAndServe("127.0.0.1:8040", mux); err != nil {
