@@ -31,7 +31,8 @@ The interesting design decisions:
 - **Three interchangeable enforcement backends.** Blocking can be done by editing `/etc/hosts` (default), by running a local DNS proxy on `127.0.0.1:53`, or by combining the DNS proxy with a `pf` packet-filter anchor on macOS. The scheduler does not know which is in use; it talks to an `Enforcer` interface.
 - **Pure functions for the parts worth testing.** Rule evaluation, DNS-response building, hosts-line generation, and pf-anchor generation are pure functions of `(time, config, …)` with no side effects. This means the test suite covers the core behaviour without needing root, port 53, or system-file access.
 - **Diff-based activation.** The scheduler runs once a minute and computes the diff against the previous tick. The enforcer is given only `newlyBlocked` and `newlyUnblocked` lists, not the full set, so a steady-state minute is a no-op.
-- **Auto-reloading config.** Every tick reloads `config.json` from disk. There is no inotify/FSEvents listener — the 60-second window is the maximum staleness, and is good enough for human-edited rules.
+- **Auto-reloading config.** Every tick reloads the bootstrap (`sentinel.json`) and the active profile (`profiles/<active>.json`) from disk and merges them into the in-memory `Config`. There is no inotify/FSEvents listener — the 60-second window is the maximum staleness, and is good enough for human-edited rules.
+- **Named profiles.** Settings + the shared groups dictionary live in the bootstrap; rules are split into one file per profile (`default`, `work`, `study`, …). Switching profiles is a one-field write to the bootstrap that propagates on the next tick. Pause/Pomodoro stay bootstrap-level so they're never reset by a switch.
 - **Dashboard embedded in the binary.** Static HTML/CSS/JS is bundled via `go:embed`, so a single binary is the entire deliverable.
 
 ### Tech stack
@@ -48,8 +49,10 @@ The interesting design decisions:
 
 ```
                                  ┌─────────────────────────────┐
-                                 │  config.json (auto-reloaded │
-                                 │  every minute from disk)    │
+                                 │  sentinel.json (bootstrap) +│
+                                 │  profiles/<active>.json     │
+                                 │  (auto-reloaded every minute│
+                                 │  and merged in-memory)      │
                                  └──────────────┬──────────────┘
                                                 │
                                                 ▼
@@ -95,6 +98,10 @@ The interesting design decisions:
    │  • GET/POST /api/pf-preview    (auth)                           │
    │  • POST /api/pause             (auth)                           │
    │  • DELETE /api/pause           (auth)                           │
+   │  • GET /api/profiles           (auth) list profiles + active    │
+   │  • POST /api/profiles          (auth) create (clone_from opt.)  │
+   │  • DELETE /api/profiles/{name} (auth) delete (404/409 guarded)  │
+   │  • POST /api/profile/switch    (auth) change active profile     │
    │  • Embedded static dashboard (Status / Test / Manage tabs)      │
    └─────────────────────────────────────────────────────────────────┘
 ```
@@ -502,17 +509,17 @@ The web UI's `/api/pf-preview` endpoint calls `pf.GeneratePreview(domains, dnsSe
 
 ## 8. Configuration
 
-`internal/config/config.go`. Single global `AppConfig` guarded by an `RWMutex`. All access goes through `GetConfig()` (returns a value copy) and `LoadConfig()` / `SaveConfig()` (file I/O under exclusive lock).
+`internal/config/config.go`. Single global `AppConfig` guarded by an `RWMutex`. All access goes through `GetConfig()` (returns a value copy) and `LoadConfig()` / `SaveConfig()` (file I/O under exclusive lock). On-disk format is split into a bootstrap file plus one file per profile; see [File location](#file-location). The in-memory `Config` below is the *merged* view — keeping it identical to the pre-profiles shape lets every downstream package (scheduler, proxy, enforcer) ignore the split entirely.
 
-### Schema
+### Schema (in-memory, post-merge)
 
 ```go
 type Config struct {
-    Settings Settings            `json:"settings"`
-    Groups   map[string][]string `json:"groups"`
-    Rules    []Rule              `json:"rules"`
-    Pause    *PauseWindow        `json:"pause,omitempty"`
-    Pomodoro *PomodoroSession    `json:"pomodoro,omitempty"`
+    Settings Settings            // from sentinel.json
+    Groups   map[string][]string // from sentinel.json
+    Rules    []Rule              // from profiles/<active>.json
+    Pause    *PauseWindow        // from sentinel.json
+    Pomodoro *PomodoroSession    // from sentinel.json
 }
 
 type Settings struct {
@@ -558,27 +565,57 @@ A rule used to carry a single `Domain` string, which meant blocking five gaming 
 
 ### File location
 
-| OS | Path |
-|---|---|
-| macOS | `/Library/Application Support/Sentinel/config.json` |
-| Windows | `%PROGRAMDATA%\Sentinel\config.json` |
-| Linux | `/etc/distractionsfree/config.json` |
-| `UseLocalConfig=true` | `./config.json` |
+The on-disk format is split into a **bootstrap** file plus one file per **profile**:
+
+| OS | Bootstrap (`sentinel.json`) | Profiles directory |
+|---|---|---|
+| macOS | `/Library/Application Support/Sentinel/sentinel.json` | `/Library/Application Support/Sentinel/profiles/<name>.json` |
+| Windows | `%PROGRAMDATA%\Sentinel\sentinel.json` | `%PROGRAMDATA%\Sentinel\profiles\<name>.json` |
+| Linux | `/etc/distractionsfree/sentinel.json` | `/etc/distractionsfree/profiles/<name>.json` |
+| `UseLocalConfig=true` | `./sentinel.json` | `./profiles/<name>.json` |
 
 `UseLocalConfig` is a package-level boolean set by `--local`, `--test-web`, and `--test-query` so they can run against a working-directory config without touching system paths.
 
+`BootstrapFile` carries everything except rules — `Settings`, `Groups`, `Pause`, `Pomodoro`, and `ActiveProfile string`. `ProfileFile` carries `Rules []Rule`. `LoadConfig()` reads both and merges them into the in-memory `Config` struct (which keeps the original pre-profiles shape, so the scheduler/proxy/enforcer don't see this split). `SaveConfig()` does the inverse — it splits in-memory state back into bootstrap + active profile and writes both files atomically (CreateTemp + Rename) so the scheduler tick reading mid-write never sees a truncated file.
+
+The split is deliberate:
+
+- **Groups stay in the bootstrap** so they're reusable across profiles. Profile-specific blocking is expressed by adding a finer-grained group to the dictionary, not by overriding inside the profile.
+- **Pause / Pomodoro stay in the bootstrap** because they're runtime state — switching profiles mid-Pomodoro must not break the work-phase lock, and a pause should outlive a profile change.
+- **Auth token stays in the bootstrap** so a profile switch never invalidates the dashboard's stored credentials.
+
+### Profiles
+
+Profile-related public functions in `internal/config/profiles.go`:
+
+- `ListProfiles() ([]string, error)` — returns sorted profile names from `profiles/*.json`
+- `ProfileExists(name) (bool, error)`
+- `CreateProfile(name, cloneFrom string) error` — `cloneFrom == ""` → empty rule set
+- `DeleteProfile(name) error` — refuses to delete the active profile or `default`
+- `SwitchProfile(name) error` — writes new `ActiveProfile` to the bootstrap, then `LoadConfig()` to refresh in-memory state
+- `ReplaceFullConfig(cfg Config) error` — used by `POST /api/config/update` to accept the merged shape and route it back to bootstrap + active profile, preserving the auth token
+- `ValidateProfileName(name) error` — `^[a-z0-9][a-z0-9_-]{0,31}$`; reserved: `sentinel`, `bootstrap`, `config`
+- `ActiveProfile() string` — the name whose rules currently populate `AppConfig.Rules`
+
+`SwitchProfile` propagates with the same 60-second latency as every other config change because the scheduler tick already ends with `LoadConfig()`.
+
 ### Bootstrap
 
-On first run, if the config file doesn't exist, `LoadConfig()` writes a default config:
+On first run, if `sentinel.json` doesn't exist, `LoadConfig()` writes a default install — bootstrap + `profiles/default.json` — using the embedded `default_config.json`:
 
 - `primary_dns: "8.8.8.8:53"`, `backup_dns: "1.1.1.1:53"`
 - `enforcement_mode: "hosts"`
 - `dns_failure_mode: "open"`
 - `enable_foreground_tracking: false`
 - A randomly generated 32-character hex `auth_token`
-- Two seed groups — `games` (roblox/epic/steam/fortnite/minecraft) and `social` (discord/facebook/instagram/tiktok/snapchat/reddit) — each bound by an active rule to the school window (09:00–15:00 weekdays) plus a nightly window (21:30–23:59 every day).
+- `active_profile: "default"`
+- Two seed groups — `games` (roblox/epic/steam/fortnite/minecraft) and `social` (discord/facebook/instagram/tiktok/snapchat/reddit) — each bound by an active rule (in `profiles/default.json`) to the school window (09:00–15:00 weekdays) plus a nightly window (21:30–23:59 every day).
 
-If an existing config has a missing `auth_token`, one is generated and the file is rewritten. This is the only field auto-modified on load.
+If an existing bootstrap has a missing `auth_token`, one is generated and the file is rewritten. This is the only field auto-modified on load.
+
+### Legacy migration
+
+Pre-profiles installs have a single `config.json`. On the first `LoadConfig()` after upgrading, `migrateLegacyConfigIfNeeded()` splits it: `Settings`/`Groups`/`Pause`/`Pomodoro` go into `sentinel.json`, `Rules` go into `profiles/default.json`, `active_profile` is set to `"default"`, and the original is renamed to `config.json.bak` as a safety net. Idempotent — re-running it does nothing once the new layout is in place. If `active_profile` ever points at a missing file (e.g., a `default.json` deleted manually), `LoadConfig()` falls back to `default`, recreating an empty profile if needed, and logs a warning rather than crashing.
 
 ### Reload cadence
 

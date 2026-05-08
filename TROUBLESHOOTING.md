@@ -121,7 +121,7 @@ If the block isn't there during a scheduled window, the scheduler hasn't fired (
 If the block *is* there but the site loads anyway:
 
 - Your browser or app may have cached the DNS resolution. Try a private window, or restart the app.
-- The site may be served from a CDN domain not covered by the static prefix list (`""`, `www.`, `m.`, `mobile.`, `app.`). Add the relevant subdomain to the relevant group in `config.json`.
+- The site may be served from a CDN domain not covered by the static prefix list (`""`, `www.`, `m.`, `mobile.`, `app.`). Add the relevant subdomain to the relevant group in `sentinel.json` (groups are shared across profiles).
 
 To preview what *would* be written without root:
 
@@ -488,7 +488,7 @@ If launchd / Service Manager logs aren't useful, run the daemon in the foregroun
 sudo ./sentinel stop          # stop the service version
 sudo ./sentinel run           # run with the supervisor (foreground)
 # or, even simpler, no privileges needed for hosts-mode rule evaluation:
-./sentinel --local            # uses ./config.json
+./sentinel --local            # uses ./sentinel.json + ./profiles/
 ```
 
 `--local` is a fast way to validate that the rules and scheduler logic work — it skips system paths and won't install anything.
@@ -544,12 +544,12 @@ Always use `sudo ./sentinel stop && sudo ./sentinel start` — not raw `launchct
 Three flags exist exactly so you can test the daemon's core logic without privileges, without binding port 53, and without modifying the system.
 
 ```bash
-# Will youtube.com be blocked at this specific time per current ./config.json?
+# Will youtube.com be blocked at this specific time per current ./sentinel.json + active profile?
 ./sentinel --test-query "2024-04-01 10:30" youtube.com
 # Output includes: applicable rules, would-block status, and a real DNS response
 # from upstream so you can verify what the upstream resolver returns.
 
-# Run the full dashboard against ./config.json (no service install, no system changes).
+# Run the full dashboard against ./sentinel.json (no service install, no system changes).
 # All endpoints work, including hosts-preview and pf-preview.
 ./sentinel --test-web
 # → http://localhost:8040
@@ -558,7 +558,7 @@ Three flags exist exactly so you can test the daemon's core logic without privil
 ./sentinel --test-applescript
 ```
 
-`--test-query` and `--test-web` use `./config.json` in the working directory rather than the system path, so you can iterate on groups and rules without touching the live config. `make build` followed by `--test-web` is the fastest dev loop for trying out new group shapes or schedule timings.
+`--test-query` and `--test-web` use `./sentinel.json` (+ `./profiles/<active>.json`) in the working directory rather than the system path, so you can iterate on groups, rules, and profiles without touching the live config. `make build` followed by `--test-web` is the fastest dev loop for trying out new group shapes or schedule timings.
 
 ---
 
@@ -646,8 +646,8 @@ Sentinel needs to own port 53 to intercept queries. The other service must move 
 ```bash
 # Open the web UI and change primary_dns to 127.0.0.1:5300
 open http://localhost:8040
-# — or edit config.json directly —
-sudo nano /Library/Application\ Support/Sentinel/config.json
+# — or edit sentinel.json directly (settings live in the bootstrap, not in profile files) —
+sudo nano /Library/Application\ Support/Sentinel/sentinel.json
 # set "primary_dns": "127.0.0.1:5300"
 ```
 
@@ -658,7 +658,7 @@ You can also set a backup in case your local resolver is down:
 "backup_dns":  "8.8.8.8:53"
 ```
 
-> **Note:** If your `primary_dns` was still at the factory default (`8.8.8.8:53`) when Sentinel first started in `dns` or `strict` mode, Sentinel auto-detected your previous system DNS and saved it automatically. In that case this step may already be done — check the web UI or config.json before editing.
+> **Note:** If your `primary_dns` was still at the factory default (`8.8.8.8:53`) when Sentinel first started in `dns` or `strict` mode, Sentinel auto-detected your previous system DNS and saved it automatically. In that case this step may already be done — check the web UI or `sentinel.json` before editing.
 
 **Step 3 — Restart Sentinel.**
 
@@ -670,7 +670,7 @@ Sentinel now owns port 53 (blocking distracting sites by returning `0.0.0.0`) an
 
 #### What happens if Sentinel crashes or is killed?
 
-In `dns`/`strict` mode the OS sends all DNS through Sentinel. If it stops unexpectedly, behaviour depends on `dns_failure_mode` in `config.json`:
+In `dns`/`strict` mode the OS sends all DNS through Sentinel. If it stops unexpectedly, behaviour depends on `dns_failure_mode` in `sentinel.json`:
 
 | `dns_failure_mode` | Sentinel down | Sentinel restarted by launchd |
 |--------------------|--------------|-------------------------------|
@@ -684,7 +684,7 @@ In `dns`/`strict` mode the OS sends all DNS through Sentinel. If it stops unexpe
 To change the setting:
 
 ```bash
-sudo nano /Library/Application\ Support/Sentinel/config.json
+sudo nano /Library/Application\ Support/Sentinel/sentinel.json
 # set "dns_failure_mode": "closed"
 sudo sentinel restart
 ```
@@ -732,24 +732,63 @@ curl -H "X-Auth-Token: $TOKEN" http://localhost:8040/api/status
 
 ### Config edits aren't taking effect
 
-The scheduler reloads `config.json` once per minute. Wait 60 seconds.
+The scheduler reloads the bootstrap (`sentinel.json`) and the active profile (`profiles/<active>.json`) once per minute. Wait 60 seconds.
 
 If they're still not applied:
 
 ```bash
 # Validate JSON
-python3 -m json.tool < /Library/Application\ Support/Sentinel/config.json
+python3 -m json.tool < /Library/Application\ Support/Sentinel/sentinel.json
+python3 -m json.tool < /Library/Application\ Support/Sentinel/profiles/$(jq -r .active_profile /Library/Application\ Support/Sentinel/sentinel.json).json
 
 # Check the daemon's logs for parse errors
 log show --predicate 'process == "sentinel"' --last 5m | grep -i config
 ```
 
-If the file is malformed, the daemon logs a warning and keeps using the previous in-memory copy — your changes won't apply until you fix the JSON.
+If either file is malformed, the daemon logs a warning and keeps using the previous in-memory copy — your changes won't apply until you fix the JSON.
 
 You can also force a reload by hitting `GET /api/config` (which calls `LoadConfig()`):
 
 ```bash
 curl -s http://localhost:8040/api/config > /dev/null
+```
+
+### Active profile points at a missing file
+
+**Symptom:** Logs show `config: active profile "<name>" missing on disk, falling back to "default"`.
+
+**Cause:** `sentinel.json` has `active_profile` set to a name whose file isn't in `profiles/`. Most often happens when a profile file was deleted manually, or when a `sentinel --set-profile` was run against a fresh config dir before the profile existed.
+
+**Fix:** the daemon already self-heals — it falls back to `default`, recreating an empty `profiles/default.json` if necessary, and continues running. To pick the profile you actually wanted:
+
+```bash
+sudo sentinel --list-profiles      # confirm what's on disk
+sudo sentinel --set-profile <name>  # switch to one that exists
+```
+
+### `profile name "X" invalid` from --set-profile or the API
+
+Profile names must match `^[a-z0-9][a-z0-9_-]{0,31}$` — lowercase ASCII, digits, dashes, and underscores only, max 32 chars, no leading dash/underscore. The names `sentinel`, `bootstrap`, and `config` are reserved (would collide with bootstrap or legacy filenames in the same directory). Rename to something that fits the pattern.
+
+### Profile delete returns 409 (`cannot delete the active profile`)
+
+You can't delete the profile you're currently using, and `default` is permanently undeletable. Switch to a different profile first, then delete:
+
+```bash
+sudo sentinel --set-profile default
+TOKEN=$(curl -s http://localhost:8040/api/config | jq -r .settings.auth_token)
+curl -X DELETE http://localhost:8040/api/profiles/work -H "X-Auth-Token: $TOKEN"
+```
+
+### Migration from a pre-profiles install
+
+The first time the new daemon boots against an old `config.json`, it splits the file into `sentinel.json` + `profiles/default.json` and renames the original to `config.json.bak`. Idempotent — it's a no-op once the new layout exists. If you want to roll back to the old binary, restore the `.bak`:
+
+```bash
+sudo systemctl stop sentinel        # or: sudo launchctl unload .../sentinel.plist
+sudo mv /Library/Application\ Support/Sentinel/config.json.bak \
+        /Library/Application\ Support/Sentinel/config.json
+sudo rm -rf /Library/Application\ Support/Sentinel/{sentinel.json,profiles}
 ```
 
 ### `pf anchor setup failed` in logs (strict mode)

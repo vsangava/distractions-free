@@ -62,6 +62,7 @@ No. The scheduler's 1-minute ticker is a regular Go timer — it doesn't issue p
 - [Install](#install)
 - [The web dashboard](#the-web-dashboard)
 - [Configuration](#configuration)
+- [Profiles](#profiles)
 - [Pause & resume](#pause--resume)
 - [Focus sessions (Pomodoro)](#focus-sessions-pomodoro)
 - [Enforcement modes](#enforcement-modes)
@@ -192,17 +193,19 @@ The PIN is a friction layer — a moment of pause before making changes — not 
 
 ## Configuration
 
-The daemon reads its configuration from a single JSON file:
+Configuration lives in two places on disk: a **bootstrap file** that holds settings, the shared groups dictionary, pause/pomodoro state, and the active-profile pointer; and one or more **profile files** that hold only the rules. This split lets you swap between named rule sets (Work, Study, Weekend, …) without re-saving everything else. See [Profiles](#profiles) for the full feature.
 
-| OS | Path |
-|---|---|
-| macOS (service) | `/Library/Application Support/Sentinel/config.json` |
-| Windows (service) | `%PROGRAMDATA%\Sentinel\config.json` |
-| Any (`--local`) | `./config.json` (working directory) |
+| OS | Bootstrap | Profiles |
+|---|---|---|
+| macOS (service)   | `/Library/Application Support/Sentinel/sentinel.json` | `/Library/Application Support/Sentinel/profiles/<name>.json` |
+| Windows (service) | `%PROGRAMDATA%\Sentinel\sentinel.json`                | `%PROGRAMDATA%\Sentinel\profiles\<name>.json`                |
+| Any (`--local`)   | `./sentinel.json`                                     | `./profiles/<name>.json`                                     |
 
-The file is created with defaults on first launch. The scheduler reloads it every minute — live edits take effect on the next tick, no restart required.
+Both files are created with defaults on first launch. The scheduler reloads from disk every minute — live edits take effect on the next tick, no restart required. **Migration**: if you're upgrading from a pre-profiles install, your existing `config.json` is split into the bootstrap + a `profiles/default.json` automatically on first run, and the original is renamed to `config.json.bak` as a safety net.
 
 ### Example config
+
+The bootstrap (`sentinel.json`) holds everything except rules:
 
 ```json
 {
@@ -220,6 +223,14 @@ The file is created with defaults on first launch. The scheduler reloads it ever
     "social": ["facebook.com", "fbcdn.net", "facebook.net", "instagram.com", "cdninstagram.com", "tiktok.com", "tiktokv.com", "tiktokcdn.com", "..."],
     "_doh":   ["dns.google", "cloudflare-dns.com", "mozilla.cloudflare-dns.com", "one.one.one.one", "..."]
   },
+  "active_profile": "default"
+}
+```
+
+A profile file (`profiles/default.json`) holds only the rules:
+
+```json
+{
   "rules": [
     {
       "group": "games",
@@ -281,6 +292,70 @@ The `_doh` group is **active by default in strict mode**. It contains common DNS
 - **`rules[].daily_quota_minutes`** *(optional)* — cap how many minutes per calendar day the group is accessible. Once this limit is reached the group is blocked for the rest of the day, regardless of the scheduled window. `0` or omitted means no quota. **Requires `dns` or `strict` enforcement mode** — usage is tracked at the DNS proxy layer and is not available in `hosts` mode. Browsers in their default configuration are unaffected. The edge case: if a browser has a **specific DoH provider manually configured** (Chrome set to "With Google" / "With Cloudflare"; Firefox "DNS over HTTPS" set to a provider), it bypasses `127.0.0.1:53` and those queries are not counted. Leaving browser DNS on automatic (the default) avoids this.
 - **`rules[].schedules`** — keyed by weekday (`"Monday"` … `"Sunday"`). Each value is an array of `{start, end}` slots in `HH:MM` 24-hour format. Domains are blocked when the current time falls in `[start, end)`.
 - **`pause`** *(optional)* — `{"until": "<RFC3339 timestamp>"}`. All blocking suspended until that time. Cleared automatically when the timestamp passes.
+
+---
+
+## Profiles
+
+A **profile** is a named set of rules. Sentinel ships with one (`default`); you can save more (`work`, `study`, `weekend`, …) and switch between them. Settings, the shared groups dictionary, and runtime state (pause/pomodoro) live in the bootstrap and are *not* per-profile, so a switch only swaps the schedule — it doesn't reset your DNS config, your auth token, or break a Pomodoro work-phase lock.
+
+### How files are laid out
+
+```
+$CONFIG_DIR/
+├── sentinel.json              # bootstrap: settings, groups, pause, pomodoro,
+│                              # auth_token, "active_profile": "default"
+└── profiles/
+    ├── default.json           # rules only
+    ├── work.json              # rules only
+    └── study.json             # rules only
+```
+
+Each profile file is just `{"rules": [ … ]}` — same `Rule` shape as before. Group references (`"group": "social"`) resolve against the shared groups dictionary in the bootstrap, so to add profile-specific blocking you generally define a finer-grained group (e.g., `youtube_only` separate from `videos`) rather than overriding inside the profile.
+
+### Switching profiles
+
+From the dashboard, the header has a profile dropdown that's visible on every tab. Picking a different profile POSTs to `/api/profile/switch` and the daemon picks up the new active profile on its next 1-minute scheduler tick. The dropdown is auto-disabled during a Pomodoro work session (HTTP 423) so you can't unlock yourself out of focus mode by switching to an empty profile.
+
+From the CLI:
+
+```bash
+# List profiles, '*' marks the active one
+sudo sentinel --list-profiles
+
+# Switch to a different profile (root needed because this writes the system bootstrap)
+sudo sentinel --set-profile work
+```
+
+### Creating, cloning, and deleting profiles
+
+The **Manage** tab has a "Profiles" section (gated by the same PIN that protects rule edits). Type a name, optionally pick a profile to clone from, hit Create. To delete a profile, switch away from it first — the active profile cannot be deleted, and `default` is permanently undeletable.
+
+Or via the API directly:
+
+```bash
+TOKEN=$(curl -s http://localhost:8040/api/config | jq -r '.settings.auth_token')
+
+# Create a "work" profile cloned from default
+curl -X POST http://localhost:8040/api/profiles \
+  -H "X-Auth-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"work","clone_from":"default"}'
+
+# Switch active profile
+curl -X POST http://localhost:8040/api/profile/switch \
+  -H "X-Auth-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"work"}'
+
+# Delete an inactive profile
+curl -X DELETE http://localhost:8040/api/profiles/work \
+  -H "X-Auth-Token: $TOKEN"
+```
+
+Profile names must match `^[a-z0-9][a-z0-9_-]{0,31}$` (lowercase, dashes/underscores, max 32 chars). The names `sentinel`, `bootstrap`, and `config` are reserved.
+
+### Migration from older installs
+
+If you're upgrading from a version that used a single `config.json`, Sentinel migrates automatically the first time the new daemon boots: `Settings`, `Groups`, `Pause`, and `Pomodoro` go into `sentinel.json`; `Rules` go into `profiles/default.json`; the old file is renamed to `config.json.bak` so a botched migration is recoverable. The migration is idempotent — re-running it does nothing once the new layout is in place.
 
 ---
 
@@ -417,8 +492,10 @@ sudo sentinel clean [--yes]     # forensic uninstall
 | `status` | sudo | Print whether the service is running | — |
 | `run` | sudo | Run as if launched by the service supervisor (foreground) | — |
 | `clean [--yes]` | sudo | Undo every system change; use before deleting the binary | [Uninstall](#uninstall--cleanup) |
-| `--local` | none | Run the daemon in the foreground using `./config.json` | [Test utilities](#test-utilities) |
+| `--local` | none | Run the daemon in the foreground using `./sentinel.json` + `./profiles/` | [Test utilities](#test-utilities) |
 | `--set-mode <mode>` | sudo | Set `enforcement_mode` in config and exit (modes: `hosts`, `dns`, `strict`) | [Switching modes](#switching-modes) |
+| `--set-profile <name>` | sudo | Switch the active profile and exit; the daemon picks it up within 60s | [Profiles](#profiles) |
+| `--list-profiles` | sudo | Print every saved profile, marking the active one with `*` | [Profiles](#profiles) |
 | `--test-query "<YYYY-MM-DD HH:MM>" <domain>` | none | Check whether a domain would be blocked at a specific time | [Test utilities](#test-utilities) |
 | `--test-web` | none | Start the dashboard standalone without installing the service | [Test utilities](#test-utilities) |
 | `--test-applescript` | none | Generate and optionally run the tab-closing AppleScript (macOS) | [Test utilities](#test-utilities) |
