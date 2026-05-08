@@ -8,7 +8,6 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
-	"os"
 	"strconv"
 	"time"
 
@@ -151,13 +150,6 @@ func UpdateConfigHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path, err := config.GetConfigFilePath()
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "cannot resolve config path: " + err.Error()})
-		return
-	}
-
 	// Preserve the existing auth token — callers cannot replace it via this endpoint.
 	existing := config.GetConfig()
 	if existing.IsLockedByPomodoro(time.Now()) {
@@ -165,17 +157,12 @@ func UpdateConfigHandler(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": "config changes are locked during a Pomodoro work session"})
 		return
 	}
-	cfg.Settings.AuthToken = existing.Settings.AuthToken
 
-	data, _ := json.MarshalIndent(cfg, "", "  ")
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	// ReplaceFullConfig splits the merged Config across sentinel.json + the
+	// active profile file and reloads in-memory state.
+	if err := config.ReplaceFullConfig(cfg); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": "failed to write config: " + err.Error()})
-		return
-	}
-	if err := config.LoadConfig(); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "config written but reload failed: " + err.Error()})
 		return
 	}
 

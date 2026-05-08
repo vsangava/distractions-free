@@ -504,23 +504,44 @@ func authRequest(method, path string, body []byte) *http.Request {
 
 func setWorkPhase(t *testing.T) {
 	t.Helper()
-	t.Cleanup(func() { config.AppConfig.Pomodoro = nil })
+	// Bootstrap AppConfig from disk (so Settings, Groups, AuthToken, active
+	// profile are all populated) before mutating Pomodoro. Without this, a
+	// subsequent SaveConfig would persist a half-initialized config.
+	if err := config.LoadConfig(); err != nil {
+		t.Fatalf("setWorkPhase: LoadConfig failed: %v", err)
+	}
+	t.Cleanup(func() {
+		config.ClearPomodoro()
+		_ = config.SaveConfig()
+	})
 	config.AppConfig.Pomodoro = &config.PomodoroSession{
 		Phase:        "work",
 		PhaseEndsAt:  time.Now().Add(10 * time.Minute),
 		WorkMinutes:  25,
 		BreakMinutes: 5,
 	}
+	if err := config.SaveConfig(); err != nil {
+		t.Fatalf("setWorkPhase: SaveConfig failed: %v", err)
+	}
 }
 
 func setBreakPhase(t *testing.T) {
 	t.Helper()
-	t.Cleanup(func() { config.AppConfig.Pomodoro = nil })
+	if err := config.LoadConfig(); err != nil {
+		t.Fatalf("setBreakPhase: LoadConfig failed: %v", err)
+	}
+	t.Cleanup(func() {
+		config.ClearPomodoro()
+		_ = config.SaveConfig()
+	})
 	config.AppConfig.Pomodoro = &config.PomodoroSession{
 		Phase:        "break",
 		PhaseEndsAt:  time.Now().Add(5 * time.Minute),
 		WorkMinutes:  25,
 		BreakMinutes: 5,
+	}
+	if err := config.SaveConfig(); err != nil {
+		t.Fatalf("setBreakPhase: SaveConfig failed: %v", err)
 	}
 }
 
