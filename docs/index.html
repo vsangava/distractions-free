@@ -8,6 +8,7 @@
   <meta property="og:title" content="Sentinel — Your schedule. Enforced.">
   <meta property="og:description" content="OS-level productivity blocking for macOS and Windows. No extension to disable.">
   <meta property="og:type" content="website">
+  <link rel="icon" type="image/png" href="assets/img/logo2.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -104,7 +105,7 @@
     <div class="glow-blob w-80 h-80 bg-indigo-500/10 bottom-24 -right-24"></div>
     <div class="glow-blob w-64 h-64 bg-sky-400/5 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"></div>
 
-    <div class="relative max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-24 text-center">
+    <div class="relative w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-24 text-center">
       <!-- Logo -->
       <div class="flex justify-center mb-8">
         <img src="assets/img/logo2.png" alt="Sentinel" class="h-20 w-auto drop-shadow-[0_0_24px_rgba(56,189,248,0.3)]">
@@ -140,9 +141,9 @@
 
         <!-- macOS install one-liner -->
         <p class="text-xs text-slate-500">or install via Terminal on macOS:</p>
-        <div class="inline-flex items-center gap-3 bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-sm max-w-full">
+        <div class="flex items-center gap-3 bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-sm w-full max-w-[40rem]">
           <span class="text-slate-500 shrink-0">$</span>
-          <code class="text-emerald-400 font-mono text-xs sm:text-sm truncate">curl -fsSL https://github.com/vsangava/sentinel/releases/latest/download/install.sh | sudo bash</code>
+          <code class="text-emerald-400 font-mono text-xs sm:text-sm flex-1 min-w-0 text-left truncate">curl -fsSL https://github.com/vsangava/sentinel/releases/latest/download/install.sh | sudo bash</code>
           <button x-data="{ copied: false }"
                   @click="navigator.clipboard.writeText('curl -fsSL https://github.com/vsangava/sentinel/releases/latest/download/install.sh | sudo bash'); copied = true; setTimeout(() => copied = false, 2000)"
                   class="shrink-0 text-slate-500 hover:text-slate-200 transition-colors ml-1"
