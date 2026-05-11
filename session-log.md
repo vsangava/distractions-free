@@ -914,3 +914,27 @@ Split into two commits — responsiveness fix, then favicon — pushed `docs/her
 - **`max-w-[40rem]` is an arbitrary Tailwind value, intentionally.** Neither `max-w-xl` (576px) nor `max-w-2xl` (672px) matches the download section's 640px effective max. Kept it explicit so the symmetry with the download snippet is obvious in the diff — anyone touching either snippet later sees the matching values.
 
 **Wrap-up:** PR [#108](https://github.com/vsangava/sentinel/pull/108) merged to `main`; no release. Hero install snippet now truncates correctly on narrow viewports, hero inner div fills the section width regardless of flex sizing, and both install snippets on the landing page (hero and download CTA) shrink in lockstep at every breakpoint. Favicon resolves to `assets/img/logo2.png`, suppressing the `/favicon.ico` 404 during local testing.
+
+## May 10 — Issue #56 triage + launchd plist path correction
+**Session ID:** `review-issue-56-launchd-path` · **Issue:** [#56](https://github.com/vsangava/sentinel/issues/56) (closed) · **PR:** [#110](https://github.com/vsangava/sentinel/pull/110)
+
+**Opening prompt:**
+> "review issue 56. is this really feasible? Isn't the service running already even before the user logs in?"
+
+**What happened:**
+
+Issue #56 proposed firing a "Sentinel is active" macOS notification at daemon startup, with the implementation suggested as a single `display notification` call after `Start()` completes. The user's gut question — *isn't the service already running before login?* — turned out to be the exact reason the issue was infeasible as written.
+
+Walked the install path to confirm the lifecycle. `cmd/app/main.go` defines `svcConfig` with no `UserService` override, and `runSetup()` requires root. `kardianos/service` defaults are `optionUserServiceDefault = false` and `optionKeepAliveDefault = true` (`service.go:71,75`), so on macOS the install path resolves to `/Library/LaunchDaemons/com.github.sentinel.plist` (`service_darwin.go:104–112`) — a system-wide LaunchDaemon, started by launchd at boot, kept alive across crashes. By the time any user has a console session, the daemon's `Start()` has long since returned. At boot `getMacUser()` returns `""` because `/dev/console` is owned by `root`, and `runAsMacUser()` then runs `osascript` as root with no GUI session attached — `display notification` requires a bound Aqua session and silently drops without one. So a literal implementation of the issue would emit a notification nobody could see.
+
+Offered four directions via `AskUserQuestion`: notify on first scheduler tick where a console user appears (workable), notify on every login change (noisier), close as won't-do, or just comment. User picked close. Posted a comment on #56 explaining the LaunchDaemon lifecycle, why `display notification` drops at boot, and that the dashboard at `:8040` already serves as the "is it running?" signal. Closed as `not planned`.
+
+While verifying the install path, noticed `DESIGN.md:872` and `TROUBLESHOOTING.md` (lines 468, 471, 505, 530, 702, 703, 718) all claimed the plist lives at `~/Library/LaunchAgents/com.github.sentinel.plist`. They were internally inconsistent too — the `cat ~/Library/LaunchAgents/...` example sat directly above `launchctl print system/com.github.sentinel`, which targets the LaunchDaemon `system/` domain. Asked whether to file a separate issue or fix in place; user said fix and merge. Branched, replaced the path everywhere it appeared, added `sudo` where `/Library/LaunchDaemons` requires it, and rewrote the DESIGN.md macOS bullet to also call out the boot-time start + `KeepAlive=true` behaviour (the same fact that killed #56). Opened PR #110, set `--auto` squash-merge with branch delete; the merge fast-forwarded immediately.
+
+**Gotchas worth flagging:**
+
+- **The Explore agent initially repeated the docs' stale claim.** First search said the plist was at `~/Library/LaunchAgents/...` because that's what TROUBLESHOOTING.md said. Verified directly against `kardianos/service@v1.2.4/service_darwin.go` before trusting either the doc or the agent — the source-of-truth check turned out to be exactly what the user was prompting for. Worth a reminder that "the agent's report" and "what the docs say" are both untrusted on this kind of question; only the library code is authoritative.
+- **`launchctl unload` left in place rather than `bootout`.** Modernizing to `launchctl bootout system/<label>` was tempting while editing those lines, but the rest of TROUBLESHOOTING uses `unload`/`load` throughout, and the goal was a path correction, not a syntax sweep. Flagged in the PR description for a possible follow-up.
+- **#56 isn't dead forever.** The "fire on first scheduler tick where `getMacUser() != ""`, gated by a once-per-process flag" variant is genuinely workable and was explicitly noted in the close comment so anyone re-opening has the workable design ready. Not pursued because the dashboard already answers the underlying question and a one-shot login banner doesn't earn its keep against the extra state.
+
+**Wrap-up:** Issue #56 closed as `not planned` with a feasibility-analysis comment. PR [#110](https://github.com/vsangava/sentinel/pull/110) merged to `main`; no release. Documentation now correctly identifies the install path as `/Library/LaunchDaemons/com.github.sentinel.plist` and DESIGN.md's macOS notes call out the boot-time-before-login lifecycle that drove #56's outcome.
