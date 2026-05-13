@@ -4,7 +4,8 @@
     "backup_dns": "1.1.1.1:53",
     "enforcement_mode": "hosts",
     "dns_failure_mode": "open",
-    "enable_foreground_tracking": false
+    "enable_foreground_tracking": false,
+    "windows_foreground_use_uia": false
   },
   "groups": {
     "games": [

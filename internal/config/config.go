@@ -37,13 +37,22 @@ type Settings struct {
 	AuthToken       string `json:"auth_token"`
 	EnforcementMode string `json:"enforcement_mode,omitempty"`
 	DNSFailureMode  string `json:"dns_failure_mode,omitempty"`
-	// EnableForegroundTracking turns on the per-tick AppleScript probe that
+	// EnableForegroundTracking turns on the per-tick foreground-tab probe that
 	// records how long each blocked-list domain is actually the foreground
-	// browser tab. macOS-only; safe under any enforcement_mode (hosts/dns/strict)
-	// because the probe runs in the scheduler, independent of the enforcer. Off
-	// by default — flip to true to start populating foreground_minutes in
-	// /api/usage.
+	// browser tab. Safe under any enforcement_mode (hosts/dns/strict) because the
+	// probe runs in the scheduler, independent of the enforcer. Off by default —
+	// flip to true to start populating foreground_minutes in /api/usage. macOS
+	// reads the real active-tab URL via AppleScript; Windows uses a window-title
+	// heuristic (Chrome/Edge), optionally upgraded by WindowsForegroundUseUIA;
+	// no-op on other platforms.
 	EnableForegroundTracking bool `json:"enable_foreground_tracking,omitempty"`
+	// WindowsForegroundUseUIA, when true, makes the Windows foreground probe try
+	// to read the active tab's real URL out of the browser's address bar via UI
+	// Automation, falling back to the window-title heuristic on any failure.
+	// Windows-only; ignored elsewhere. Off by default — it's the more accurate
+	// path but exercises a fair amount of COM plumbing, so it's opt-in until it
+	// has more real-world Windows mileage. Requires EnableForegroundTracking.
+	WindowsForegroundUseUIA bool `json:"windows_foreground_use_uia,omitempty"`
 }
 
 // GetEnforcementMode returns the validated enforcement mode, defaulting to "hosts"
