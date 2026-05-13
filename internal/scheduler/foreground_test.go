@@ -147,6 +147,32 @@ func TestExtractHost(t *testing.T) {
 	}
 }
 
+func TestHostFromBrowserWindowTitle(t *testing.T) {
+	cases := []struct {
+		name, title, want string
+	}{
+		{"bare domain + chrome suffix", "youtube.com - Google Chrome", "https://youtube.com"},
+		{"subdomain in title", "(2) music.youtube.com — playlists - Google Chrome", "https://music.youtube.com"},
+		{"domain mid-title + edge suffix", "Sign in - reddit.com - Microsoft Edge", "https://reddit.com"},
+		{"zero-width-space edge variant", "old.reddit.com - Microsoft​Edge", "https://old.reddit.com"},
+		{"no domain in title (common case)", "YouTube - Google Chrome", ""},
+		{"new tab", "New Tab - Google Chrome", ""},
+		{"ip literal is not a host", "192.168.1.1 - Router admin - Google Chrome", ""},
+		{"empty title", "", ""},
+		{"only the browser suffix", " - Google Chrome", ""},
+		{"first host token wins", "Re: youtube.com vs vimeo.com - Forum - Google Chrome", "https://youtube.com"},
+		// No recognised browser suffix → still scans the whole title for a host.
+		{"unknown browser suffix", "reddit.com — Some Other Browser", "https://reddit.com"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := hostFromBrowserWindowTitle(c.title); got != c.want {
+				t.Errorf("hostFromBrowserWindowTitle(%q) = %q, want %q", c.title, got, c.want)
+			}
+		})
+	}
+}
+
 func TestGenerateForegroundProbeScript_IncludesAllBrowsers(t *testing.T) {
 	g := &MacOSForegroundProbeGenerator{}
 	script := g.GenerateForegroundProbeScript()
@@ -169,6 +195,21 @@ func TestGenerateForegroundProbeScript_IncludesAllBrowsers(t *testing.T) {
 	// Must emit tab-separated output for parseForegroundProbeOutput.
 	if !strings.Contains(script, "frontApp & tab & activeURL & tab") {
 		t.Error("probe script missing tab-separated stdout return")
+	}
+}
+
+func TestRecordForegroundTick_EdgeIsSupported(t *testing.T) {
+	// The Windows probe reports "Microsoft Edge" as the frontmost app; it must
+	// be accepted the same way Chrome is.
+	withForegroundProbeStub(t, "Microsoft Edge\thttps://old.reddit.com/r/golang\t5", nil)
+	now := time.Date(2026, 5, 6, 14, 30, 0, 0, time.UTC)
+	cfg := trackedCfg()
+	event, ok, err := recordForegroundTick(now, cfg, foregroundProbe, BuildGroupLookup(cfg))
+	if err != nil || !ok {
+		t.Fatalf("expected event, got ok=%v err=%v", ok, err)
+	}
+	if event.Domain != "reddit.com" || event.Group != "social" {
+		t.Errorf("got %+v, want reddit.com/social", event)
 	}
 }
 

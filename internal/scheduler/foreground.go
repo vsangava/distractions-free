@@ -3,6 +3,7 @@ package scheduler
 import (
 	"fmt"
 	neturl "net/url"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -21,11 +22,15 @@ import (
 // machine doing something."
 const foregroundIdleCutoffSeconds = 60
 
-// supportedForegroundBrowsers mirrors the set the per-tick close path supports.
-// AppleScript URL access uses a slightly different idiom for Safari ("current
-// tab") vs the others ("active tab"), handled inside the probe script.
+// supportedForegroundBrowsers is the set of frontmost-app names recordForegroundTick
+// will accept a URL/host from. On macOS the AppleScript probe reads tab URLs from
+// Chrome/Safari/Arc/Brave (Safari uses "current tab", the others "active tab").
+// "Microsoft Edge" is here for the Windows probe (Edge is the default browser
+// there); the macOS AppleScript probe doesn't query Edge, so the entry is a
+// harmless no-op on macOS.
 var supportedForegroundBrowsers = []string{
 	"Google Chrome",
+	"Microsoft Edge",
 	"Safari",
 	"Arc",
 	"Brave Browser",
@@ -36,9 +41,10 @@ var supportedForegroundBrowsers = []string{
 //   - App is the frontmost application name (e.g. "Google Chrome"). On
 //     Windows this is the supported-browser name we mapped the foreground
 //     process to, or "" if the foreground app isn't a tracked browser.
-//   - URL is the active tab URL/host when App is a supported browser; ""
-//     otherwise. May be a bare host (no scheme) on platforms that can't read
-//     the full URL — extractHost tolerates that.
+//   - URL is the active tab URL when App is a supported browser; "" otherwise.
+//     On Windows (window-title heuristic) it's a synthesised "https://<host>"
+//     for whatever host was extractable from the title, or "" if none —
+//     extractHost handles it either way.
 //   - IdleSeconds is how long the user has been idle (no keyboard/mouse input).
 //
 // The zero value (App == "") means "nothing to record this tick" — no GUI
@@ -231,6 +237,52 @@ func extractHost(rawURL string) string {
 	}
 	host := strings.ToLower(u.Hostname())
 	return strings.TrimPrefix(host, "www.")
+}
+
+// browserTitleSuffixes are the trailing " - <Browser>" markers Chromium appends
+// to every window title. Stripped before scanning for a host. Small on purpose:
+// issue #94 scopes the first Windows iteration to Chrome + Edge (English UI);
+// other browsers and locale variants come with the UI Automation probe. The
+// zero-width-space variant has been observed in some Edge builds.
+var browserTitleSuffixes = []string{
+	" - Google Chrome",
+	" - Microsoft Edge",
+	" - Microsoft​Edge",
+}
+
+// hostTokenRe matches a hostname-shaped token: one or more dot-separated DNS
+// labels followed by an alphabetic TLD (2-63 letters). Deliberately strict so
+// arbitrary words in a page title aren't mistaken for hosts — and IP literals
+// (no alpha TLD) are excluded.
+var hostTokenRe = regexp.MustCompile(`(?i)\b((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63})\b`)
+
+// hostFromBrowserWindowTitle does a best-effort extraction of a hostname from a
+// Chromium browser window title. A window title is the *page* title, which only
+// sometimes contains the domain — so this returns "" for most titles, and a
+// synthesised "https://<host>" (for extractHost) when a host-shaped token is
+// present.
+//
+// Known limitation: if a page title *mentions* a domain other than the one
+// being viewed (e.g. a forum thread titled "...youtube.com..."), this will
+// attribute the minute to the mentioned domain. The UI Automation probe (issue
+// #94 follow-up) reads the real address bar and doesn't have this problem; the
+// window-title path is the "something rather than nothing" first cut.
+func hostFromBrowserWindowTitle(title string) string {
+	t := strings.TrimSpace(title)
+	for _, sfx := range browserTitleSuffixes {
+		if strings.HasSuffix(t, sfx) {
+			t = strings.TrimSpace(strings.TrimSuffix(t, sfx))
+			break
+		}
+	}
+	if t == "" {
+		return ""
+	}
+	host := hostTokenRe.FindString(strings.ToLower(t))
+	if host == "" {
+		return ""
+	}
+	return "https://" + host
 }
 
 // isSupportedBrowser reports whether name is one of the browsers the probe

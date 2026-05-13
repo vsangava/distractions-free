@@ -328,22 +328,57 @@ Each scheduler tick also:
 
 **Retention:** Per-day usage logs are pruned once per calendar day at 30 days — files older than the cutoff are deleted outright. The block event log (`events.jsonl`) is pruned to 30 days on the same tick. Pre-rotation deployments carrying a single `usage.jsonl` are migrated to per-day files on first start (one-pass split keyed by event date, original removed on success); the migration is idempotent and a no-op on fresh installs.
 
-### Foreground tab tracking (macOS, opt-in)
+### Foreground tab tracking (opt-in)
 
 A second usage signal sits alongside DNS-bucket tracking for users who want the
 "how long did I actually look at this site" view rather than "how often did the
-machine resolve it." It's macOS-only and opt-in via `settings.enable_foreground_tracking`.
+machine resolve it." Opt-in via `settings.enable_foreground_tracking`.
 
-**How it works.** Each scheduler tick (1/min), if the flag is on, the scheduler
-runs a single AppleScript probe that returns `frontmost_app<TAB>active_url<TAB>idle_seconds`.
-Idle comes from IOKit's `HIDIdleTime` (no entitlement needed). The active URL
-is read from `active tab of front window` for Chrome/Arc/Brave, and `current
-tab of front window` for Safari. The tick is recorded as a `UsageEvent{Kind: "foreground"}`
-in the same per-day usage log only when **all** of these are true:
+**Probe abstraction.** The per-tick sampler is a `ForegroundProbe` interface
+(`internal/scheduler/foreground.go`): `Probe() (ForegroundProbeResult, error)`,
+where `ForegroundProbeResult` is `{App, URL, IdleSeconds}` and the zero value
+("App == "") means "nothing to record this tick." The active implementation is
+chosen at package init by build tag:
 
-1. `idle_seconds < 60` — user is in front of the machine (not just leaving a tab open).
-2. `frontmost_app` is one of Chrome / Safari / Arc / Brave Browser.
-3. The URL parses as `http`/`https` with a non-empty host (filters out `chrome://newtab/`, `about:blank`, etc.).
+| Platform | Implementation | URL fidelity | Idle source |
+|----------|----------------|--------------|-------------|
+| macOS | `macOSForegroundProbe` — `osascript` AppleScript probe | real active-tab URL | IOKit `HIDIdleTime` |
+| Windows | `windowsForegroundProbe` — Win32 `GetForegroundWindow` + window title | best-effort host from window title (Chrome/Edge only) | `GetLastInputInfo` vs `GetTickCount` |
+| Linux/other | `macOSForegroundProbe` (its `runtime.GOOS != "darwin"` guard makes it a no-op) | — | — |
+
+`recordForegroundTick` is platform-agnostic: it calls `probe.Probe()`, applies
+the filters below, and emits at most one `UsageEvent{Kind: "foreground"}` per
+tick into the per-day usage log.
+
+**macOS probe.** A single AppleScript that returns
+`frontmost_app<TAB>active_url<TAB>idle_seconds`. Idle comes from IOKit's
+`HIDIdleTime` (no entitlement needed). The active URL is read from `active tab
+of front window` for Chrome/Arc/Brave, and `current tab of front window` for
+Safari (Edge tabs aren't read on macOS — "Microsoft Edge" is in the supported
+set only for the Windows probe). Per-browser URL fetches are dispatched as
+nested `osascript -e` calls so a missing browser app fails only its own branch,
+not the whole script.
+
+**Windows probe.** `GetForegroundWindow` → `GetWindowThreadProcessId` →
+`OpenProcess`/`QueryFullProcessImageName` to check the foreground process is
+`chrome.exe` or `msedge.exe`, then `GetWindowTextW` for the title, then
+`hostFromBrowserWindowTitle` strips the `" - Google Chrome"` / `" - Microsoft
+Edge"` suffix and pulls the first hostname-shaped token out of the title (a
+strict regex: dot-separated DNS labels + alphabetic TLD, so words and IP
+literals don't match). Because a window title is the *page* title, this only
+registers pages whose title contains the domain — most don't, so this
+under-reports heavily, and it can mis-attribute when a title *mentions* a
+different domain than the one open. The accurate fix is a UI Automation
+address-bar probe (issue #94 follow-up); the window-title path is the
+"something rather than nothing" first cut so the opt-in flag isn't a complete
+no-op on Windows.
+
+**Filtering.** A tick is recorded only when **all** of these hold (in
+`recordForegroundTick`):
+
+1. `IdleSeconds < 60` — user is in front of the machine (not just leaving a tab open).
+2. `App` is one of Chrome / Edge / Safari / Arc / Brave Browser (`isSupportedBrowser`).
+3. The URL parses as `http`/`https` with a non-empty host (filters out `chrome://newtab/`, `about:blank`, etc.). The Windows probe synthesises `https://<host>` so this gate applies uniformly.
 4. The host (with `www.` stripped, lowercased, subdomain-aware) matches a domain in some configured group **other than `_doh`**.
 
 The privacy floor — point 4 — is deliberate: the tracker only ever logs domains
@@ -378,7 +413,7 @@ the DNS-bucket signal. Routing foreground time into quota is a bigger product
 decision that's deliberately out of scope for the metrics addition.
 
 **Limitations.**
-- macOS-only. Windows is tracked separately as a follow-up.
+- Full fidelity on macOS only. The Windows probe is a window-title heuristic (Chrome/Edge), so it misses most pages and can mis-attribute; the UI Automation upgrade is tracked in issue #94. Linux/other: no-op.
 - Browser-only. Time spent in Slack, Discord, Xcode, etc. is not counted (tracked separately as a follow-up).
 - 60-second granularity. Sessions shorter than a minute may not register.
 - Inherits the `osascript` fragility tax of the per-tick close path — same `su -` user-context elevation under launchd-as-root.
@@ -528,7 +563,7 @@ type Settings struct {
     AuthToken                string `json:"auth_token"`
     EnforcementMode          string `json:"enforcement_mode,omitempty"`           // "hosts" | "dns" | "strict"
     DNSFailureMode           string `json:"dns_failure_mode,omitempty"`           // "open" (default) | "closed"
-    EnableForegroundTracking bool   `json:"enable_foreground_tracking,omitempty"` // macOS-only opt-in
+    EnableForegroundTracking bool   `json:"enable_foreground_tracking,omitempty"` // opt-in; full fidelity macOS, window-title heuristic Windows, no-op elsewhere
 }
 
 type Rule struct {
@@ -878,10 +913,12 @@ Sentinel is **not** a security tool. It's a friction tool against your own futur
 ### Windows
 
 - Service framework: Windows Service Manager via `kardianos/service`.
-- Tab closing and pre-block notifications are not implemented — Windows has no equivalent of the AppleScript path. Could be done with PowerShell + browser automation, but isn't currently.
-- `pf` is macOS-only (BSD packet filter); Windows support for strict mode would require WFP integration and isn't planned.
-- DNS reset is done by PowerShell: `Set-DnsClientServerAddress -InterfaceAlias 'Wi-Fi' -ResetServerAddresses`.
+- Tab closing and pre-block notifications are not implemented — Windows has no equivalent of the AppleScript path. Could be done with PowerShell + browser automation, but isn't currently. Tracked: tab closing #113, notifications #114.
+- Foreground tab tracking *is* implemented, but as a coarse window-title heuristic (`internal/scheduler/foreground_windows.go`): `GetForegroundWindow` + `GetWindowTextW` + a process-image check for `chrome.exe`/`msedge.exe`, with idle from `GetLastInputInfo`. It only catches pages whose window title contains the domain. The accurate UI Automation address-bar probe is the next step on issue #94.
+- `pf` is macOS-only (BSD packet filter); Windows support for strict mode would require WFP integration and isn't planned (tracked: #117).
+- `dns` mode works, but the installer doesn't auto-point adapters at `127.0.0.1` — that's manual until #112 lands. DNS *reset* (on uninstall) is done by PowerShell: `Set-DnsClientServerAddress -InterfaceAlias 'Wi-Fi' -ResetServerAddresses`.
 - `ipconfig /flushdns` for cache flush.
+- See umbrella issue #118 for the full Windows parity tracking list.
 
 ### Linux
 
