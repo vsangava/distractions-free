@@ -557,7 +557,7 @@ func evaluateRules() {
 	// works under hosts/dns/strict alike, and is the only per-domain time signal
 	// available in hosts mode (no DNS proxy → no DNS-bucket usage events).
 	if cfg.Settings.EnableForegroundTracking {
-		event, ok, err := recordForegroundTick(now, cfg, runForegroundProbe, gl)
+		event, ok, err := recordForegroundTick(now, cfg, foregroundProbe, gl)
 		if err != nil {
 			log.Printf("scheduler: foreground probe: %v", err)
 		} else if ok {

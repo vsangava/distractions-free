@@ -10,14 +10,32 @@ import (
 	"github.com/vsangava/sentinel/internal/proxy"
 )
 
-// withForegroundProbeStub swaps runForegroundProbe with a stub that returns the
-// given output (and optional error). Restores the original on test cleanup so
-// parallel tests don't leak state into each other.
+// stubForegroundProbe implements ForegroundProbe from a raw probe-output string
+// so existing test fixtures (tab-separated "app\turl\tidle" lines) keep
+// working — and the parse path stays exercised through recordForegroundTick.
+type stubForegroundProbe struct {
+	out string
+	err error
+}
+
+func (s stubForegroundProbe) Probe() (ForegroundProbeResult, error) {
+	if s.err != nil {
+		return ForegroundProbeResult{}, s.err
+	}
+	if strings.TrimSpace(s.out) == "" {
+		return ForegroundProbeResult{}, nil
+	}
+	return parseForegroundProbeOutput(s.out)
+}
+
+// withForegroundProbeStub swaps the package foregroundProbe with a stub built
+// from the given output (and optional error). Restores the original on test
+// cleanup so parallel tests don't leak state into each other.
 func withForegroundProbeStub(t *testing.T, out string, runErr error) {
 	t.Helper()
-	orig := runForegroundProbe
-	runForegroundProbe = func() (string, error) { return out, runErr }
-	t.Cleanup(func() { runForegroundProbe = orig })
+	orig := foregroundProbe
+	foregroundProbe = stubForegroundProbe{out: out, err: runErr}
+	t.Cleanup(func() { foregroundProbe = orig })
 }
 
 // trackedCfg builds a minimal config covering the tracked-domain branches.
@@ -161,7 +179,7 @@ func TestRecordForegroundTick_HappyPath(t *testing.T) {
 	cfg := trackedCfg()
 	gl := BuildGroupLookup(cfg)
 
-	event, ok, err := recordForegroundTick(now, cfg, runForegroundProbe, gl)
+	event, ok, err := recordForegroundTick(now, cfg, foregroundProbe, gl)
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
@@ -186,7 +204,7 @@ func TestRecordForegroundTick_IdleAboveCutoff(t *testing.T) {
 	withForegroundProbeStub(t, "Google Chrome\thttps://youtube.com\t120", nil)
 	now := time.Date(2026, 5, 6, 14, 30, 0, 0, time.UTC)
 	cfg := trackedCfg()
-	_, ok, err := recordForegroundTick(now, cfg, runForegroundProbe, BuildGroupLookup(cfg))
+	_, ok, err := recordForegroundTick(now, cfg, foregroundProbe, BuildGroupLookup(cfg))
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
@@ -199,7 +217,7 @@ func TestRecordForegroundTick_NonBrowserApp(t *testing.T) {
 	withForegroundProbeStub(t, "Slack\t\t0", nil)
 	now := time.Date(2026, 5, 6, 14, 30, 0, 0, time.UTC)
 	cfg := trackedCfg()
-	_, ok, err := recordForegroundTick(now, cfg, runForegroundProbe, BuildGroupLookup(cfg))
+	_, ok, err := recordForegroundTick(now, cfg, foregroundProbe, BuildGroupLookup(cfg))
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
@@ -212,7 +230,7 @@ func TestRecordForegroundTick_DomainNotInGroups(t *testing.T) {
 	withForegroundProbeStub(t, "Safari\thttps://example.com/article\t0", nil)
 	now := time.Date(2026, 5, 6, 14, 30, 0, 0, time.UTC)
 	cfg := trackedCfg()
-	_, ok, err := recordForegroundTick(now, cfg, runForegroundProbe, BuildGroupLookup(cfg))
+	_, ok, err := recordForegroundTick(now, cfg, foregroundProbe, BuildGroupLookup(cfg))
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
@@ -227,7 +245,7 @@ func TestRecordForegroundTick_DohDomainExcluded(t *testing.T) {
 	withForegroundProbeStub(t, "Google Chrome\thttps://dns.google/\t0", nil)
 	now := time.Date(2026, 5, 6, 14, 30, 0, 0, time.UTC)
 	cfg := trackedCfg()
-	_, ok, err := recordForegroundTick(now, cfg, runForegroundProbe, BuildGroupLookup(cfg))
+	_, ok, err := recordForegroundTick(now, cfg, foregroundProbe, BuildGroupLookup(cfg))
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
@@ -242,7 +260,7 @@ func TestRecordForegroundTick_EmptyProbeOutputIsNoOp(t *testing.T) {
 	withForegroundProbeStub(t, "", nil)
 	now := time.Date(2026, 5, 6, 14, 30, 0, 0, time.UTC)
 	cfg := trackedCfg()
-	_, ok, err := recordForegroundTick(now, cfg, runForegroundProbe, BuildGroupLookup(cfg))
+	_, ok, err := recordForegroundTick(now, cfg, foregroundProbe, BuildGroupLookup(cfg))
 	if err != nil {
 		t.Errorf("expected no error on empty probe output, got %v", err)
 	}
@@ -256,7 +274,7 @@ func TestRecordForegroundTick_ProbeError(t *testing.T) {
 	withForegroundProbeStub(t, "", stubErr)
 	now := time.Date(2026, 5, 6, 14, 30, 0, 0, time.UTC)
 	cfg := trackedCfg()
-	_, ok, err := recordForegroundTick(now, cfg, runForegroundProbe, BuildGroupLookup(cfg))
+	_, ok, err := recordForegroundTick(now, cfg, foregroundProbe, BuildGroupLookup(cfg))
 	if err == nil {
 		t.Error("expected probe error to propagate")
 	}
@@ -270,7 +288,7 @@ func TestRecordForegroundTick_StripsWWW(t *testing.T) {
 	withForegroundProbeStub(t, "Google Chrome\thttps://www.youtube.com/\t0", nil)
 	now := time.Date(2026, 5, 6, 14, 30, 0, 0, time.UTC)
 	cfg := trackedCfg()
-	event, ok, err := recordForegroundTick(now, cfg, runForegroundProbe, BuildGroupLookup(cfg))
+	event, ok, err := recordForegroundTick(now, cfg, foregroundProbe, BuildGroupLookup(cfg))
 	if err != nil || !ok {
 		t.Fatalf("expected event, got ok=%v err=%v", ok, err)
 	}
@@ -285,7 +303,7 @@ func TestRecordForegroundTick_BlankURLForBrowser(t *testing.T) {
 	withForegroundProbeStub(t, "Google Chrome\tchrome://newtab/\t0", nil)
 	now := time.Date(2026, 5, 6, 14, 30, 0, 0, time.UTC)
 	cfg := trackedCfg()
-	_, ok, err := recordForegroundTick(now, cfg, runForegroundProbe, BuildGroupLookup(cfg))
+	_, ok, err := recordForegroundTick(now, cfg, foregroundProbe, BuildGroupLookup(cfg))
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}

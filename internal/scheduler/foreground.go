@@ -33,13 +33,27 @@ var supportedForegroundBrowsers = []string{
 
 // ForegroundProbeResult is the parsed output of one probe invocation.
 //
-//   - App is the macOS frontmost application name (e.g. "Google Chrome").
-//   - URL is the active tab URL when App is a supported browser; "" otherwise.
+//   - App is the frontmost application name (e.g. "Google Chrome"). On
+//     Windows this is the supported-browser name we mapped the foreground
+//     process to, or "" if the foreground app isn't a tracked browser.
+//   - URL is the active tab URL/host when App is a supported browser; ""
+//     otherwise. May be a bare host (no scheme) on platforms that can't read
+//     the full URL — extractHost tolerates that.
 //   - IdleSeconds is how long the user has been idle (no keyboard/mouse input).
+//
+// The zero value (App == "") means "nothing to record this tick" — no GUI
+// session, non-browser frontmost, or an unsupported platform.
 type ForegroundProbeResult struct {
 	App         string
 	URL         string
 	IdleSeconds int
+}
+
+// ForegroundProbe is the per-tick foreground sampler. Each OS provides its own
+// implementation; tests substitute a stub. Probe returns the zero
+// ForegroundProbeResult (not an error) when there's nothing to record.
+type ForegroundProbe interface {
+	Probe() (ForegroundProbeResult, error)
 }
 
 // ForegroundProbeGenerator interface so tests can swap in a deterministic
@@ -115,14 +129,29 @@ func SetForegroundProbeGenerator(g ForegroundProbeGenerator) {
 	foregroundProbeGenerator = g
 }
 
-// runForegroundProbe is the production probe runner — executes the generated
-// AppleScript and returns its stdout. Replaceable in tests.
-var runForegroundProbe = func() (string, error) {
+// macOSForegroundProbe runs the generated AppleScript via osascript and parses
+// its stdout. On non-darwin it's a no-op (returns the zero result) so this
+// stays the package default until a platform-specific probe replaces it.
+type macOSForegroundProbe struct{}
+
+func (macOSForegroundProbe) Probe() (ForegroundProbeResult, error) {
 	if runtime.GOOS != "darwin" {
-		return "", nil
+		return ForegroundProbeResult{}, nil
 	}
-	return runOsaScriptCapture(foregroundProbeGenerator.GenerateForegroundProbeScript())
+	out, err := runOsaScriptCapture(foregroundProbeGenerator.GenerateForegroundProbeScript())
+	if err != nil {
+		return ForegroundProbeResult{}, err
+	}
+	if strings.TrimSpace(out) == "" {
+		// No GUI session (e.g. running headless): nothing to record.
+		return ForegroundProbeResult{}, nil
+	}
+	return parseForegroundProbeOutput(out)
 }
+
+// foregroundProbe is the active per-tick sampler. Replaceable in tests; a
+// later change wires in a Windows implementation behind build tags.
+var foregroundProbe ForegroundProbe = macOSForegroundProbe{}
 
 // parseForegroundProbeOutput parses the tab-separated probe output.
 // Trailing whitespace from AppleScript is tolerated; an empty/missing URL
@@ -215,30 +244,23 @@ func isSupportedBrowser(name string) bool {
 	return false
 }
 
-// recordForegroundTick is the per-tick gate: probe → parse → filter → emit one
-// usage event when every condition passes. Returns ok=false (no event to
-// append) on any miss, with no error logged — these are normal cases (no
-// browser frontmost, idle, off-list domain).
+// recordForegroundTick is the per-tick gate: probe → filter → emit one usage
+// event when every condition passes. Returns ok=false (no event to append) on
+// any miss, with no error logged — these are normal cases (no browser
+// frontmost, idle, off-list domain).
 //
 // groupLookup is the shared domain→group map already built each tick by the
 // scheduler; reusing it avoids walking cfg.Groups again here.
-func recordForegroundTick(t time.Time, cfg config.Config, runProbe func() (string, error), groupLookup map[string]string) (proxy.UsageEvent, bool, error) {
-	out, err := runProbe()
-	if err != nil {
-		return proxy.UsageEvent{}, false, err
-	}
-	if strings.TrimSpace(out) == "" {
-		// Non-darwin / no GUI session: probe is a no-op, no event to record.
-		return proxy.UsageEvent{}, false, nil
-	}
-
-	res, err := parseForegroundProbeOutput(out)
+func recordForegroundTick(t time.Time, cfg config.Config, probe ForegroundProbe, groupLookup map[string]string) (proxy.UsageEvent, bool, error) {
+	res, err := probe.Probe()
 	if err != nil {
 		return proxy.UsageEvent{}, false, err
 	}
 	if res.IdleSeconds >= foregroundIdleCutoffSeconds {
 		return proxy.UsageEvent{}, false, nil
 	}
+	// Zero-value result (App == "") and non-browser frontmost both land here:
+	// nothing to record.
 	if !isSupportedBrowser(res.App) {
 		return proxy.UsageEvent{}, false, nil
 	}
