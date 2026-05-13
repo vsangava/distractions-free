@@ -841,7 +841,21 @@ The Status tab shows a warning badge on the quota section when the current mode 
 
 ### Usage tab shows zero data / Usage not accumulating
 
-1. Check enforcement mode — `hosts` mode never populates the per-day usage logs (`usage-YYYY-MM-DD.jsonl`).
+1. Check enforcement mode — `hosts` mode never populates the per-day usage logs (`usage-YYYY-MM-DD.jsonl`) with **DNS-bucket** usage. (Foreground minutes still work in `hosts` mode — see the next entry.)
 2. Check that the daemon is running: `sudo ./sentinel status` (macOS) or check services.
 3. Check that the domains you expect to see are configured in a `groups` entry. Only domains in a configured group are tracked.
 4. The Usage tab shows DNS queries, not page views. If the site uses a long-lived connection (e.g. WebSocket) after the initial load, subsequent minutes may not generate new DNS lookups and usage will appear lower than expected.
+
+### Foreground minutes stay at zero (`foreground_minutes` not accumulating)
+
+Foreground-tab time is the opt-in metric controlled by `settings.enable_foreground_tracking`. It's separate from the DNS-bucket `used_minutes`. If it's not moving:
+
+1. **Is it on?** `enable_foreground_tracking` must be `true` in `sentinel.json`. (Config is re-read every minute — no restart needed.)
+2. **Is the frontmost app a supported browser?** Time only counts while a browser window is the foreground window. macOS: Chrome, Safari, Arc, Brave. Windows: Chrome and Edge only.
+3. **Is the domain in a group?** Only domains configured in a `groups` entry (other than `_doh`) are recorded. Browsing anything else records nothing — that's the privacy floor, not a bug.
+4. **Idle gate.** If there's been no keyboard/mouse input for ≥60s, that minute isn't counted (you're "away", not "looking at the tab").
+5. **Wrong platform.** Linux and other OSes don't implement the probe at all — `foreground_minutes` will always be zero there even with the flag on.
+
+**Windows-specific:** by default the Windows probe derives the host from the browser **window title**, so it only registers pages whose title happens to contain the domain — most don't, so expect it to under-report heavily. To get accurate readings, set `"windows_foreground_use_uia": true` in `sentinel.json`: that reads the real URL out of the address bar via UI Automation. Caveats: it currently only recognises a few browser-UI locales (English plus a handful) — on other locales it silently falls back to the title heuristic — and it's opt-in because the UI-Automation path is still new. If you turn it on and foreground time *still* doesn't move, your browser UI language probably isn't one of the recognised ones; the window-title heuristic is the fallback, so behaviour is no worse than with the flag off.
+
+> Firefox is not supported for foreground tracking on Windows yet.
