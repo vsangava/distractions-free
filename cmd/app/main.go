@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -171,6 +172,17 @@ func runSetup() {
 		log.Fatal("setup requires root/admin privileges. Run with: sudo ./sentinel setup")
 	}
 
+	// Pin the service to the installed binary path before creating the service
+	// handle. kardianos/service defaults Executable to os.Executable(), which is
+	// whatever path setup was launched from — fine if you ran the binary that
+	// already lives at the install location, but breaks if you ran the freshly
+	// downloaded binary from ~/Downloads. Setting Executable explicitly makes
+	// the launchd plist / Windows SCM registration point at the canonical path.
+	installPath := cleanup.InstalledBinaryPath()
+	if installPath != "" {
+		svcConfig.Executable = installPath
+	}
+
 	prg := &program{}
 	s, err := service.New(prg, svcConfig)
 	if err != nil {
@@ -188,27 +200,10 @@ func runSetup() {
 	_ = service.Control(s, "stop")      // best-effort; not running is fine
 	_ = service.Control(s, "uninstall") // best-effort; not registered is fine
 
-	if runtime.GOOS == "darwin" {
-		dest := "/usr/local/bin/sentinel"
-		src, err := os.Executable()
-		if err != nil {
-			log.Fatalf("setup: could not resolve binary path: %v", err)
+	if installPath != "" {
+		if err := installBinary(installPath); err != nil {
+			log.Fatalf("setup: %v", err)
 		}
-		data, err := os.ReadFile(src)
-		if err != nil {
-			log.Fatalf("setup: could not read binary: %v", err)
-		}
-		if err := os.MkdirAll("/usr/local/bin", 0755); err != nil {
-			log.Fatalf("setup: could not create /usr/local/bin: %v", err)
-		}
-		// Remove first so we don't write through any open file descriptors held
-		// by a previous service process; the kernel keeps the old inode alive
-		// for already-running readers, while new launchd loads see fresh bytes.
-		_ = os.Remove(dest)
-		if err := os.WriteFile(dest, data, 0755); err != nil {
-			log.Fatalf("setup: could not write binary to %s: %v", dest, err)
-		}
-		fmt.Printf("Installed binary → %s\n", dest)
 	}
 
 	if err := service.Control(s, "install"); err != nil {
@@ -220,6 +215,62 @@ func runSetup() {
 
 	fmt.Println("Sentinel installed and running.")
 	fmt.Println("Open http://localhost:8040 to configure.")
+}
+
+// installBinary copies the currently-running executable to dest, replacing any
+// existing copy. Cross-platform: macOS lands at /usr/local/bin/sentinel,
+// Windows at %ProgramFiles%\Sentinel\sentinel.exe.
+//
+// Idempotent re-setup: if the running binary already *is* the install target
+// (the user re-ran setup from the installed location), the copy is skipped to
+// avoid the OS-specific corner cases of replacing a file with itself (Windows
+// in particular fails with sharing-violation on a self-referential rename).
+func installBinary(dest string) error {
+	src, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("could not resolve running binary path: %w", err)
+	}
+	if samePath(src, dest) {
+		fmt.Printf("Binary already installed at %s — skipping copy\n", dest)
+		return nil
+	}
+
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return fmt.Errorf("could not read binary at %s: %w", src, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+		return fmt.Errorf("could not create %s: %w", filepath.Dir(dest), err)
+	}
+	// Remove first so we don't write through any open file descriptors held
+	// by a previous service process; on Unix the kernel keeps the old inode
+	// alive for already-running readers, while new service loads see fresh
+	// bytes. On Windows the previous service must already have been
+	// uninstalled (the runSetup pipeline does this) for the remove to succeed.
+	_ = os.Remove(dest)
+	if err := os.WriteFile(dest, data, 0755); err != nil {
+		return fmt.Errorf("could not write binary to %s: %w", dest, err)
+	}
+	fmt.Printf("Installed binary → %s\n", dest)
+	return nil
+}
+
+// samePath reports whether two paths refer to the same file on disk after
+// resolving symlinks and case-folding the volume on Windows. Used to make
+// re-setup from the installed location idempotent.
+func samePath(a, b string) bool {
+	ra, err := filepath.Abs(a)
+	if err != nil {
+		return false
+	}
+	rb, err := filepath.Abs(b)
+	if err != nil {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(ra, rb)
+	}
+	return ra == rb
 }
 
 func runClean(yes bool) {
@@ -281,8 +332,10 @@ func runClean(yes bool) {
 	// Step 7 — Remove config directory.
 	addStep(cleanup.RemoveConfigDir(yes))
 
-	// Step 8 — Remove the binary that setup installed at /usr/local/bin/sentinel
-	// (macOS only). Without this, a follow-up `setup` aborts with "already installed".
+	// Step 8 — Remove the binary that setup installed at the canonical path
+	// (/usr/local/bin/sentinel on macOS, %ProgramFiles%\Sentinel\sentinel.exe
+	// on Windows). Without this, a follow-up `setup` would re-register the
+	// service against a stale binary.
 	addStep(cleanup.RemoveInstalledBinary())
 
 	// Step 9 — Remove temp files.
@@ -305,7 +358,9 @@ func runClean(yes bool) {
 }
 
 func main() {
-	// setup installs the binary to /usr/local/bin (macOS), registers the service, and starts it.
+	// setup installs the binary to a stable path (macOS: /usr/local/bin/sentinel;
+	// Windows: %ProgramFiles%\Sentinel\sentinel.exe), registers the service
+	// against that path, and starts it.
 	// Usage: sudo ./sentinel setup
 	if len(os.Args) > 1 && os.Args[1] == "setup" {
 		runSetup()

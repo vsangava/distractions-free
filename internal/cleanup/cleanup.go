@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -218,20 +219,49 @@ func RemoveConfigDir(yes bool) Step {
 	return Step{Label: "Remove config directory", Status: StatusDone}
 }
 
-// installedBinaryPath is the path that `setup` copies the binary to on macOS.
+// installedBinaryPath is the canonical path that `setup` copies the binary to.
 // Exposed as a package-private var so tests can substitute a tempdir path.
-var installedBinaryPath = "/usr/local/bin/sentinel"
-
-// RemoveInstalledBinary removes the installed sentinel binary at /usr/local/bin/sentinel
-// (macOS only). This is the binary that `setup` copies in. Without this, a user who
-// runs `clean` and then `setup` again gets "Sentinel is already installed" because the
-// stale binary is still on disk even though the service is gone.
 //
-// On Unix, unlink succeeds even if the binary is currently executing — including the
-// case where the running process *is* /usr/local/bin/sentinel — because the kernel
-// keeps the inode alive until the last open reference is dropped.
+//   - macOS:   /usr/local/bin/sentinel
+//   - Windows: %ProgramFiles%\Sentinel\sentinel.exe
+//   - other:   "" (no install step)
+var installedBinaryPath = defaultInstalledBinaryPath()
+
+func defaultInstalledBinaryPath() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "/usr/local/bin/sentinel"
+	case "windows":
+		progFiles := os.Getenv("ProgramFiles")
+		if progFiles == "" {
+			progFiles = `C:\Program Files`
+		}
+		return filepath.Join(progFiles, "Sentinel", "sentinel.exe")
+	default:
+		return ""
+	}
+}
+
+// InstalledBinaryPath returns the canonical install path for setup/clean.
+// Returns "" on platforms with no binary install step. main.go uses this to
+// pin svcConfig.Executable so the service registers the stable installed path.
+func InstalledBinaryPath() string {
+	return installedBinaryPath
+}
+
+// RemoveInstalledBinary removes the installed sentinel binary at its
+// canonical path. This is the binary that `setup` copies in. Without this,
+// a user who runs `clean` and then `setup` again gets a stale binary on
+// disk even though the service is gone.
+//
+// On Unix, unlink succeeds even if the binary is currently executing —
+// including the case where the running process *is* the installed binary —
+// because the kernel keeps the inode alive until the last open reference is
+// dropped. On Windows, deleting an executable that's currently running fails
+// with sharing-violation; the cleanup pipeline relies on the service having
+// already been stopped at step 1 before this step runs.
 func RemoveInstalledBinary() Step {
-	if runtime.GOOS != "darwin" {
+	if installedBinaryPath == "" {
 		return Step{Label: "Remove installed binary", Status: StatusSkipped, Detail: "not applicable on " + runtime.GOOS}
 	}
 	return removeBinary(installedBinaryPath)
@@ -244,6 +274,12 @@ func removeBinary(path string) Step {
 	fmt.Printf(" $ rm -f %s\n", path)
 	if err := os.Remove(path); err != nil {
 		return Step{Label: "Remove installed binary", Status: StatusWarn, Detail: err.Error()}
+	}
+	// On Windows, also drop the now-empty %ProgramFiles%\Sentinel directory
+	// so a fresh install doesn't see leftover state. os.Remove on a non-empty
+	// directory fails — that's fine; we only want to clean up if we created it.
+	if runtime.GOOS == "windows" {
+		_ = os.Remove(filepath.Dir(path))
 	}
 	return Step{Label: "Remove installed binary", Status: StatusDone, Detail: path}
 }

@@ -130,6 +130,19 @@ TOKEN=$(curl -s http://localhost:8040/api/config | jq -r '.settings.auth_token')
 curl -s -H "X-Auth-Token: $TOKEN" http://localhost:8040/api/hosts-preview | jq
 ```
 
+#### Windows-specific notes
+
+The hosts-mode writer is cross-platform but `%SystemRoot%\System32\drivers\etc\hosts` is a sensitive Windows file; a few caveats apply that don't on macOS/Linux.
+
+- **Line endings** — Sentinel writes `\r\n` on Windows so the file matches what Notepad and other Windows tools expect. The reader strips trailing `\r`, so a CRLF file round-trips through `clean` correctly.
+- **Atomic replace** — the write is `tmp file + os.Rename`. Go's `os.Rename` on Windows uses `MoveFileEx` with `MOVEFILE_REPLACE_EXISTING` (since Go 1.5), so same-volume replacement is atomic. There's no partial-write window even if the daemon is killed mid-rename.
+- **Windows Defender / Controlled Folder Access (CFA)** — when CFA is enabled (Settings → Windows Security → Virus & threat protection → Ransomware protection), edits to the hosts file may be silently blocked or pop a warning. To allow Sentinel through:
+  1. Open *Windows Security* → *Virus & threat protection* → *Ransomware protection* → *Allow an app through Controlled folder access*.
+  2. Add `%PROGRAMFILES%\Sentinel\sentinel.exe` (the path `setup` installs to).
+  Symptoms of being blocked by CFA: `clean` reports `Clean /etc/hosts` as `error`, or `sentinel.exe` logs an `Access is denied.` write failure on the hosts path.
+- **Internet Connection Sharing (`hosts.ics`)** — ICS maintains a separate `hosts.ics` file alongside the system hosts file. Sentinel does not touch `hosts.ics`. If you have ICS enabled and see Sentinel's managed block disappearing, ICS may be regenerating the file; disable ICS or stop the *Internet Connection Sharing (ICS)* service.
+- **File locking** — antivirus or backup agents that hold the hosts file open during the write window can cause the rename to fail with `Access is denied.` Sentinel logs the error and retries on the next tick; persistent failures usually indicate a real-time scanner conflict.
+
 ### `dns` mode
 
 Verify the proxy is up and your OS is using it:
