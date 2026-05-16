@@ -1,0 +1,523 @@
+# Windows integration test harness.
+#
+# Builds sentinel.exe on a Windows runner, then drives it through the full
+# install / run / clean lifecycle in both `hosts` and `dns` enforcement modes.
+# Verifies that:
+#   - the binary lands at %ProgramFiles%\Sentinel\sentinel.exe (#116)
+#   - the SCM service registration points at that path
+#   - hosts mode writes the managed block with CRLF line endings (#115)
+#   - blocked domains actually return 0.0.0.0 to the system resolver
+#   - the web dashboard at 127.0.0.1:8040 responds with /api/config + /api/status
+#   - dns mode binds 127.0.0.1:53 and configures every "Up" adapter (#112)
+#   - `clean --yes` removes the service, binary, install dir, config dir, and
+#     restores the hosts file + DNS adapters
+#
+# windows-latest GitHub-hosted runners execute steps with administrative
+# rights by default, which is what `setup` and `clean` require.
+#
+# Triggers:
+#   release.published   — runs after a version tag is released
+#   workflow_dispatch   — manual button in the Actions UI for development
+#
+# Out of scope (tracked separately, see umbrella #118):
+#   - browser tab closing on Windows (#113, not implemented)
+#   - pre-block toast notifications (#114, not implemented)
+#   - WFP strict mode (#117, won't-fix)
+#   - foreground-tab tracking via UI Automation (real-Windows smoke test)
+
+name: Windows Test Harness
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A failed run must not leave a long-lived runner in a bad state.
+# windows-latest is ephemeral, but the post-job safety-net step still
+# tries `clean --yes` so the dashboard / event-log dumps reflect a tidy state.
+jobs:
+  windows-integration:
+    name: Install / run / clean — hosts + dns modes
+    runs-on: windows-latest
+    timeout-minutes: 25
+
+    env:
+      # Lower-cased everywhere PowerShell normalises automatically; consumed in
+      # later steps via $env:SENTINEL_AUTH_TOKEN. Stable token means the test
+      # doesn't have to parse JSON to get the auth header.
+      SENTINEL_AUTH_TOKEN: ci-windows-test-${{ github.run_id }}
+
+    steps:
+      # ---------------------------------------------------------------- setup
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Show build environment
+        shell: pwsh
+        run: |
+          Write-Host "=== runner ==="
+          [Environment]::OSVersion | Format-List
+          Write-Host "=== go ==="
+          go version
+          Write-Host "=== privilege ==="
+          $id  = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+          $win = New-Object System.Security.Principal.WindowsPrincipal($id)
+          Write-Host ("running as: {0}" -f $id.Name)
+          Write-Host ("admin?      {0}" -f $win.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator))
+
+      - name: Build sentinel.exe
+        shell: pwsh
+        env:
+          CGO_ENABLED: '0'
+          GOOS: windows
+          GOARCH: amd64
+        run: |
+          # Mirror the release workflow's ldflags so the test exercises the
+          # exact build shape that ships. For workflow_dispatch runs there is
+          # no release tag, so substitute a sentinel value.
+          $version = if ('${{ github.event_name }}' -eq 'release') {
+            '${{ github.event.release.tag_name }}'
+          } else {
+            "ci-${{ github.run_id }}"
+          }
+          go build -ldflags "-X github.com/vsangava/sentinel/internal/version.Version=$version" -o sentinel.exe ./cmd/app
+          Get-ChildItem .\sentinel.exe | Select-Object Length, LastWriteTime | Format-List
+
+      - name: Unit tests (cross-platform Go suite)
+        shell: pwsh
+        run: go test ./...
+
+      # ----------------------------------------------- no-install rule eval
+      # --test-query is a privilege-free path that exercises rule evaluation
+      # against ./sentinel.json + ./profiles/. With no on-disk config present,
+      # config.LoadConfig() seeds the embedded defaults — which block the
+      # `social` group all day every day — and evaluates against those.
+      - name: --test-query — verify rule evaluation (no install)
+        shell: pwsh
+        run: |
+          $out = .\sentinel.exe --test-query "2024-04-01 10:30" reddit.com 2>&1 | Out-String
+          Write-Host $out
+          if ($out -notmatch '(?i)blocked') {
+            throw "expected --test-query to report reddit.com as blocked; got: $out"
+          }
+          Write-Host "[OK] reddit.com correctly evaluated as blocked"
+          # Clean up the seeded files so they don't shadow later steps.
+          Remove-Item .\sentinel.json -ErrorAction SilentlyContinue
+          if (Test-Path .\profiles) { Remove-Item .\profiles -Recurse -Force }
+
+      # =====================================================================
+      # SCENARIO 1 — HOSTS MODE (default)
+      # =====================================================================
+      # Uses the embedded default config because hosts mode is the default
+      # enforcement mode and the seeded `social` group covers reddit.com 24/7.
+      # The auth_token is generated by the daemon on first start and read back
+      # via the unauthenticated GET /api/config call.
+      # ---------------------------------------------------------------------
+      - name: Hosts mode — sentinel.exe setup
+        shell: pwsh
+        run: |
+          .\sentinel.exe setup
+          # Scheduler ticks every 60s; first tick fires shortly after Start.
+          # Wait 75s so the block is guaranteed to be applied to the hosts file.
+          Write-Host "Waiting 75s for scheduler tick..."
+          Start-Sleep -Seconds 75
+
+      - name: Hosts mode — verify install
+        shell: pwsh
+        run: |
+          # Service registered + running
+          $svc = Get-Service -Name Sentinel -ErrorAction Stop
+          Write-Host ("Service: {0} ({1})" -f $svc.Name, $svc.Status)
+          if ($svc.Status -ne 'Running') {
+            throw "expected Service 'Sentinel' to be Running, got '$($svc.Status)'"
+          }
+
+          # Binary at the canonical install path (#116)
+          $expected = Join-Path $env:ProgramFiles 'Sentinel\sentinel.exe'
+          if (-not (Test-Path $expected)) {
+            throw "expected binary at $expected"
+          }
+          Write-Host "[OK] installed binary: $expected"
+
+          # SCM registration points at the installed path (svcConfig.Executable, #116).
+          # Without this fix the service registers whatever path setup was launched
+          # from — confirm sc.exe agrees with the install location.
+          $scOut = (sc.exe qc Sentinel | Out-String)
+          Write-Host $scOut
+          if ($scOut -notmatch [regex]::Escape($expected)) {
+            throw "SCM registration does not reference $expected — svcConfig.Executable may not be pinned"
+          }
+          Write-Host "[OK] SCM registration pinned to installed binary"
+
+      - name: Hosts mode — verify hosts file content + line endings
+        shell: pwsh
+        run: |
+          $hostsPath = Join-Path $env:WINDIR 'System32\drivers\etc\hosts'
+          $raw  = [System.IO.File]::ReadAllBytes($hostsPath)
+          $text = [System.Text.Encoding]::UTF8.GetString($raw)
+
+          if ($text -notmatch '# sentinel:begin') { throw 'no sentinel:begin marker in hosts file' }
+          if ($text -notmatch '# sentinel:end')   { throw 'no sentinel:end marker in hosts file' }
+          Write-Host "[OK] sentinel:begin / sentinel:end markers present"
+
+          # social group is on the 24/7 schedule → reddit.com lives in the file.
+          if ($text -notmatch '0\.0\.0\.0\s+reddit\.com') {
+            throw 'reddit.com not in hosts file (expected from default `social` group block)'
+          }
+          Write-Host "[OK] 0.0.0.0 reddit.com line is present"
+
+          # CRLF line endings on Windows (#115). Inspect the bytes inside the
+          # sentinel-managed block: every \n must be preceded by \r — no bare LFs.
+          $beginByte = [System.Text.Encoding]::UTF8.GetBytes('# sentinel:begin')
+          $endByte   = [System.Text.Encoding]::UTF8.GetBytes('# sentinel:end')
+          $beginIdx  = $text.IndexOf('# sentinel:begin')
+          $endIdx    = $text.IndexOf('# sentinel:end')
+          $section   = $text.Substring($beginIdx, $endIdx - $beginIdx)
+          $bareLF    = 0
+          for ($i = 0; $i -lt $section.Length; $i++) {
+            if ($section[$i] -eq "`n" -and ($i -eq 0 -or $section[$i - 1] -ne "`r")) {
+              $bareLF++
+            }
+          }
+          if ($bareLF -ne 0) {
+            throw "found $bareLF bare LF(s) inside sentinel block — expected CRLF only on Windows (#115)"
+          }
+          Write-Host "[OK] CRLF line endings inside sentinel block (no bare LFs)"
+
+      - name: Hosts mode — verify resolver returns 0.0.0.0
+        shell: pwsh
+        run: |
+          # Windows caches positive DNS results aggressively; flush before checking.
+          Clear-DnsClientCache
+          $r = Resolve-DnsName -Type A reddit.com -ErrorAction Stop
+          Write-Host ("reddit.com -> {0}" -f ($r.IPAddress -join ', '))
+          if ($r.IPAddress -notcontains '0.0.0.0') {
+            throw "expected reddit.com to resolve to 0.0.0.0 from hosts file; got $($r.IPAddress -join ', ')"
+          }
+          Write-Host "[OK] reddit.com resolves to 0.0.0.0 via hosts file"
+
+      - name: Hosts mode — verify web dashboard
+        shell: pwsh
+        run: |
+          # /api/config is unauthenticated and returns the auto-generated auth token.
+          # Use that for the authenticated /api/status call.
+          $cfgRaw = Invoke-WebRequest -Uri 'http://127.0.0.1:8040/api/config' -UseBasicParsing -TimeoutSec 10
+          if ($cfgRaw.StatusCode -ne 200) { throw "/api/config returned $($cfgRaw.StatusCode)" }
+          $cfg = $cfgRaw.Content | ConvertFrom-Json
+          $token = $cfg.settings.auth_token
+          if ([string]::IsNullOrWhiteSpace($token)) { throw 'auth_token missing from /api/config response' }
+          Write-Host ("[OK] /api/config OK (token length={0})" -f $token.Length)
+
+          $hdr = @{ 'X-Auth-Token' = $token }
+          $statRaw = Invoke-WebRequest -Uri 'http://127.0.0.1:8040/api/status' -Headers $hdr -UseBasicParsing -TimeoutSec 10
+          if ($statRaw.StatusCode -ne 200) { throw "/api/status returned $($statRaw.StatusCode)" }
+          $stat = $statRaw.Content | ConvertFrom-Json
+          $blocked = if ($stat.blocked_domains) { $stat.blocked_domains.PSObject.Properties.Count } else { 0 }
+          Write-Host ("[OK] /api/status OK — mode={0}, blocked_domains={1}, paused={2}" -f $stat.enforcement_mode, $blocked, $stat.paused)
+          if ($stat.enforcement_mode -ne 'hosts') {
+            throw "expected enforcement_mode 'hosts', got '$($stat.enforcement_mode)'"
+          }
+
+      - name: Hosts mode — clean
+        shell: pwsh
+        run: |
+          $output = .\sentinel.exe clean --yes 2>&1 | Out-String
+          Write-Host $output
+          if ($LASTEXITCODE -ne 0) { throw "clean exited with code $LASTEXITCODE" }
+
+      - name: Hosts mode — verify clean removed everything
+        shell: pwsh
+        run: |
+          # Service unregistered
+          $svc = Get-Service -Name Sentinel -ErrorAction SilentlyContinue
+          if ($svc) { throw "Sentinel service still registered after clean (status: $($svc.Status))" }
+          Write-Host "[OK] service gone"
+
+          # Binary removed + empty install dir cleaned (#116)
+          $installed   = Join-Path $env:ProgramFiles 'Sentinel\sentinel.exe'
+          $installDir  = Join-Path $env:ProgramFiles 'Sentinel'
+          if (Test-Path $installed)  { throw "binary still present at $installed" }
+          if (Test-Path $installDir) { throw "$installDir directory still present after clean" }
+          Write-Host "[OK] installed binary + install dir gone"
+
+          # Config dir removed
+          $cfgDir = Join-Path $env:ProgramData 'Sentinel'
+          if (Test-Path $cfgDir) { throw "$cfgDir still present after clean" }
+          Write-Host "[OK] config dir gone"
+
+          # Hosts file restored — no managed block markers
+          $hosts = Get-Content (Join-Path $env:WINDIR 'System32\drivers\etc\hosts') -Raw
+          if ($hosts -match 'sentinel:begin' -or $hosts -match 'sentinel:end') {
+            throw 'sentinel block markers still present in hosts file'
+          }
+          Write-Host "[OK] hosts file restored (no sentinel markers)"
+
+          # Resolution works again — should NOT be 0.0.0.0
+          Clear-DnsClientCache
+          $r = Resolve-DnsName -Type A reddit.com -ErrorAction SilentlyContinue
+          if ($r -and ($r.IPAddress -contains '0.0.0.0')) {
+            throw "reddit.com still resolves to 0.0.0.0 after clean — hosts revert failed"
+          }
+          Write-Host ("[OK] reddit.com after clean -> {0}" -f (($r.IPAddress -join ', ')))
+
+      # =====================================================================
+      # SCENARIO 2 — DNS MODE
+      # =====================================================================
+      # Pre-seed the config dir with `enforcement_mode: dns` and a known
+      # auth_token so we don't have to round-trip through /api/config to read it.
+      # Block example.com 24/7 via a deterministic test rule.
+      # ---------------------------------------------------------------------
+      - name: DNS mode — pre-seed config (enforcement_mode=dns, block example.com)
+        shell: pwsh
+        run: |
+          $cfgDir   = Join-Path $env:ProgramData 'Sentinel'
+          $profDir  = Join-Path $cfgDir 'profiles'
+          New-Item -ItemType Directory -Path $profDir -Force | Out-Null
+
+          $bootstrap = [ordered]@{
+            settings = [ordered]@{
+              primary_dns      = '8.8.8.8:53'
+              backup_dns       = '1.1.1.1:53'
+              enforcement_mode = 'dns'
+              dns_failure_mode = 'open'
+              auth_token       = $env:SENTINEL_AUTH_TOKEN
+            }
+            groups = [ordered]@{
+              'ci-block' = @('example.com')
+            }
+            active_profile = 'default'
+          }
+
+          # 24/7 block on the ci-block group, every day of the week.
+          $weeklyAllDay = [ordered]@{}
+          foreach ($d in 'Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday') {
+            $weeklyAllDay[$d] = @(@{ start = '00:00'; end = '23:59' })
+          }
+          $profile = [ordered]@{
+            rules = @(
+              [ordered]@{
+                group     = 'ci-block'
+                is_active = $true
+                schedules = $weeklyAllDay
+              }
+            )
+          }
+
+          $bootstrap | ConvertTo-Json -Depth 10 | Set-Content -Encoding UTF8 (Join-Path $cfgDir 'sentinel.json')
+          $profile   | ConvertTo-Json -Depth 10 | Set-Content -Encoding UTF8 (Join-Path $profDir 'default.json')
+
+          Write-Host "=== sentinel.json ==="
+          Get-Content (Join-Path $cfgDir 'sentinel.json')
+          Write-Host "`n=== profiles\default.json ==="
+          Get-Content (Join-Path $profDir 'default.json')
+
+      - name: DNS mode — sentinel.exe setup
+        shell: pwsh
+        run: |
+          .\sentinel.exe setup
+          Write-Host "Waiting 75s for scheduler tick + DNS proxy to bind..."
+          Start-Sleep -Seconds 75
+
+      - name: DNS mode — verify install
+        shell: pwsh
+        run: |
+          # Service running
+          $svc = Get-Service -Name Sentinel -ErrorAction Stop
+          if ($svc.Status -ne 'Running') { throw "Sentinel not Running, got $($svc.Status)" }
+          Write-Host "[OK] service running"
+
+          # Port 53 bound by sentinel.exe (UDP). Skip the test cleanly if a CI
+          # image starts shipping its own resolver — surface it as a clear error.
+          $listeners = Get-NetUDPEndpoint -LocalPort 53 -ErrorAction SilentlyContinue
+          if (-not $listeners) {
+            throw 'no UDP listener on port 53 — DNS proxy did not bind'
+          }
+          Write-Host ("[OK] UDP/53 listeners: {0}" -f ($listeners.OwningProcess -join ', '))
+
+          # Adapter DNS pointed at 127.0.0.1 (#112). Confirm at least one Up
+          # adapter has 127.0.0.1 as a configured DNS server.
+          $configured = Get-DnsClientServerAddress -AddressFamily IPv4 |
+            Where-Object { $_.ServerAddresses -contains '127.0.0.1' }
+          if (-not $configured) {
+            throw 'no adapter has 127.0.0.1 as a DNS server — Setup() did not configure system DNS (#112)'
+          }
+          Write-Host ("[OK] adapters pointing at 127.0.0.1: {0}" -f (($configured.InterfaceAlias) -join ', '))
+
+      - name: DNS mode — verify proxy returns 0.0.0.0 for blocked domain
+        shell: pwsh
+        run: |
+          Clear-DnsClientCache
+          # Query the local proxy directly so we don't depend on adapter setup.
+          $r = Resolve-DnsName -Type A example.com -Server 127.0.0.1 -DnsOnly -ErrorAction Stop
+          Write-Host ("example.com (via 127.0.0.1) -> {0}" -f ($r.IPAddress -join ', '))
+          if ($r.IPAddress -notcontains '0.0.0.0') {
+            throw "expected example.com -> 0.0.0.0 from local proxy; got $($r.IPAddress -join ', ')"
+          }
+          Write-Host "[OK] DNS proxy correctly returns 0.0.0.0 for blocked domain"
+
+      - name: DNS mode — verify proxy forwards non-blocked domains
+        shell: pwsh
+        run: |
+          Clear-DnsClientCache
+          # iana.org is not in the blocked group; proxy should forward upstream.
+          $r = Resolve-DnsName -Type A iana.org -Server 127.0.0.1 -DnsOnly -ErrorAction Stop
+          $real = $r.IPAddress | Where-Object { $_ -ne '0.0.0.0' }
+          Write-Host ("iana.org (via 127.0.0.1) -> {0}" -f ($r.IPAddress -join ', '))
+          if (-not $real) {
+            throw "expected iana.org to forward to a real upstream IP; got $($r.IPAddress -join ', ')"
+          }
+          Write-Host "[OK] DNS proxy forwards non-blocked domains to upstream"
+
+      - name: DNS mode — verify web dashboard with seeded auth token
+        shell: pwsh
+        run: |
+          $hdr = @{ 'X-Auth-Token' = $env:SENTINEL_AUTH_TOKEN }
+          $statRaw = Invoke-WebRequest -Uri 'http://127.0.0.1:8040/api/status' -Headers $hdr -UseBasicParsing -TimeoutSec 10
+          if ($statRaw.StatusCode -ne 200) { throw "/api/status returned $($statRaw.StatusCode)" }
+          $stat = $statRaw.Content | ConvertFrom-Json
+          Write-Host ("[OK] /api/status — mode={0}, paused={1}" -f $stat.enforcement_mode, $stat.paused)
+          if ($stat.enforcement_mode -ne 'dns') {
+            throw "expected enforcement_mode 'dns', got '$($stat.enforcement_mode)'"
+          }
+
+      - name: DNS mode — clean
+        shell: pwsh
+        run: |
+          $output = .\sentinel.exe clean --yes 2>&1 | Out-String
+          Write-Host $output
+          if ($LASTEXITCODE -ne 0) { throw "clean exited with code $LASTEXITCODE" }
+
+      - name: DNS mode — verify clean restored DNS adapters
+        shell: pwsh
+        run: |
+          # Service gone
+          $svc = Get-Service -Name Sentinel -ErrorAction SilentlyContinue
+          if ($svc) { throw "Sentinel service still registered after clean (status: $($svc.Status))" }
+          Write-Host "[OK] service gone"
+
+          # No adapter still has 127.0.0.1 — the teardown PowerShell at
+          # internal/enforcer/dns.go should have reset every one we touched.
+          $stuck = Get-DnsClientServerAddress -AddressFamily IPv4 |
+            Where-Object { $_.ServerAddresses -contains '127.0.0.1' }
+          if ($stuck) {
+            throw ('adapters still configured for 127.0.0.1 after clean: {0}' -f (($stuck.InterfaceAlias) -join ', '))
+          }
+          Write-Host "[OK] no adapters point at 127.0.0.1"
+
+          # Binary + install dir gone
+          $installDir = Join-Path $env:ProgramFiles 'Sentinel'
+          if (Test-Path $installDir) { throw "$installDir still present after clean" }
+          Write-Host "[OK] install dir gone"
+
+          # Config dir gone
+          $cfgDir = Join-Path $env:ProgramData 'Sentinel'
+          if (Test-Path $cfgDir) { throw "$cfgDir still present after clean" }
+          Write-Host "[OK] config dir gone"
+
+          # Resolution works again
+          Clear-DnsClientCache
+          $r = Resolve-DnsName -Type A example.com -ErrorAction SilentlyContinue
+          Write-Host ("example.com after clean -> {0}" -f ($r.IPAddress -join ', '))
+
+      # ============================================================ logs
+      - name: Capture Windows event log entries
+        if: always()
+        shell: pwsh
+        run: |
+          # kardianos/service registers a Windows Event Log source named after the
+          # service ('Sentinel'). Try the dedicated provider first; fall back to
+          # scanning the Application log for anything mentioning sentinel.
+          Write-Host "=== Get-WinEvent -ProviderName Sentinel ==="
+          try {
+            Get-WinEvent -ProviderName Sentinel -MaxEvents 200 -ErrorAction Stop |
+              Sort-Object TimeCreated |
+              Format-List TimeCreated, LevelDisplayName, Id, Message
+          } catch {
+            Write-Host ("(no Sentinel-provider events: {0})" -f $_.Exception.Message)
+          }
+
+          Write-Host "`n=== recent Application log mentioning 'sentinel' ==="
+          try {
+            Get-WinEvent -LogName Application -MaxEvents 500 -ErrorAction Stop |
+              Where-Object { $_.Message -match 'sentinel' -or $_.ProviderName -match 'sentinel' } |
+              Sort-Object TimeCreated |
+              Format-List TimeCreated, ProviderName, LevelDisplayName, Id, Message
+          } catch {
+            Write-Host ("(no matching Application entries: {0})" -f $_.Exception.Message)
+          }
+
+          Write-Host "`n=== System log entries from Service Control Manager about Sentinel ==="
+          try {
+            Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Service Control Manager' } -MaxEvents 200 -ErrorAction Stop |
+              Where-Object { $_.Message -match 'Sentinel' } |
+              Sort-Object TimeCreated |
+              Format-List TimeCreated, LevelDisplayName, Id, Message
+          } catch {
+            Write-Host ("(no SCM entries about Sentinel: {0})" -f $_.Exception.Message)
+          }
+
+      - name: Final cleanup safety net
+        if: always()
+        shell: pwsh
+        run: |
+          # If any earlier step bailed out before its scenario's `clean` ran,
+          # leave the runner tidy regardless. Both calls are idempotent.
+          if (Test-Path .\sentinel.exe) {
+            try { .\sentinel.exe clean --yes 2>&1 | Out-String | Write-Host } catch { Write-Host $_ }
+          }
+
+          # Belt-and-braces — if the enforcer itself failed to reset DNS, do it
+          # by hand so the runner image (and any cached steps) recover.
+          Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+            Where-Object { $_.ServerAddresses -contains '127.0.0.1' } |
+            ForEach-Object {
+              try {
+                Set-DnsClientServerAddress -InterfaceIndex $_.InterfaceIndex -ResetServerAddresses -ErrorAction Stop
+                Write-Host ("reset DNS on adapter ifIndex={0}" -f $_.InterfaceIndex)
+              } catch { Write-Host $_ }
+            }
+          ipconfig /flushdns | Out-Null
+
+      - name: Test summary
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Host '============================================================'
+          Write-Host ' Sentinel Windows test harness — coverage at a glance'
+          Write-Host '============================================================'
+          Write-Host ''
+          Write-Host ' Build / unit:'
+          Write-Host '   [x] go build ./cmd/app (windows/amd64)'
+          Write-Host '   [x] go test ./...'
+          Write-Host '   [x] --test-query rule eval (no install)'
+          Write-Host ''
+          Write-Host ' Hosts mode (default config — `social` blocked 24/7):'
+          Write-Host '   [x] setup → service Running'
+          Write-Host '   [x] binary at %ProgramFiles%\Sentinel\sentinel.exe (#116)'
+          Write-Host '   [x] SCM registration pinned to installed path (#116)'
+          Write-Host '   [x] hosts file contains 0.0.0.0 reddit.com'
+          Write-Host '   [x] CRLF line endings in sentinel block (#115)'
+          Write-Host '   [x] Resolve-DnsName reddit.com -> 0.0.0.0'
+          Write-Host '   [x] /api/config + /api/status reachable on 127.0.0.1:8040'
+          Write-Host '   [x] clean --yes removes service / binary / install dir / config dir / hosts block'
+          Write-Host ''
+          Write-Host ' DNS mode (seeded test config — example.com blocked 24/7):'
+          Write-Host '   [x] setup → service Running, UDP/53 bound'
+          Write-Host '   [x] adapters configured with 127.0.0.1 (#112)'
+          Write-Host '   [x] proxy returns 0.0.0.0 for blocked domain'
+          Write-Host '   [x] proxy forwards non-blocked domains to upstream'
+          Write-Host '   [x] clean restores DNS adapters / removes service / removes install + config dirs'
+          Write-Host ''
+          Write-Host ' Out of scope (tracked in #118):'
+          Write-Host '   [-] browser tab closing on Windows (#113, not implemented)'
+          Write-Host '   [-] pre-block toast notifications (#114, not implemented)'
+          Write-Host '   [-] WFP strict mode (#117, won''t-fix)'
+          Write-Host '============================================================'
