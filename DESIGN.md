@@ -926,7 +926,7 @@ Sentinel is **not** a security tool. It's a friction tool against your own futur
 
 ### macOS
 
-- Service framework: `launchd`. Setup runs as root, so `kardianos/service` writes a system-wide LaunchDaemon plist to `/Library/LaunchDaemons/com.github.sentinel.plist`. With kardianos's defaults (`KeepAlive=true`), launchd starts the daemon at boot and respawns it on crash — meaning it's already running before any user logs in.
+- Service framework: `launchd`. Setup runs as root, so `kardianos/service` writes a system-wide LaunchDaemon plist to `/Library/LaunchDaemons/Sentinel.plist` (label `Sentinel`, derived from `svcConfig.Name`). With kardianos's defaults (`KeepAlive=true`), launchd starts the daemon at boot and respawns it on crash — meaning it's already running before any user logs in.
 - `osascript` is invoked as the console user (resolved via `stat -f %Su /dev/console`) so notifications appear in the user's UI session and AppleScript can talk to Chrome/Safari. Running `osascript` as root produces a notification nobody can see.
 - `networksetup` is the only supported way to set system DNS — there's no clean API.
 - `dscacheutil -flushcache` + `killall -HUP mDNSResponder` is the canonical cache-flush incantation. Both are needed.
