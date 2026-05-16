@@ -427,25 +427,41 @@ jobs:
           echo "[OK] pf anchor 'sentinel' loaded"
 
           echo "--- loaded rules in sentinel anchor ---"
-          sudo pfctl -a sentinel -s rules 2>&1 | head -20
+          rules_out=$(sudo pfctl -a sentinel -s rules 2>&1)
+          echo "$rules_out"
 
-          # Confirm tables are populated with at least one IP
-          echo "--- tables ---"
+          # Confirm at least one resolved IP made it into the loaded pf rules.
+          # macOS pf may store IPs as either:
+          #   (a) inline rule lists — `block ... from any to <ip>` (small lists)
+          #   (b) auto-promoted tables — `block ... from any to <__automatic_xxx>` (large lists)
+          # Either form proves the strict refresh ran and resolved the blocked
+          # domain via backup_dns. Match both shapes so the test isn't brittle
+          # to pf's internal heuristic for promotion.
+          ip_v4_inline=$(echo "$rules_out" | grep -cE 'from any to [0-9]+\.[0-9]+\.[0-9]+\.[0-9]+')
+          ip_v6_inline=$(echo "$rules_out" | grep -cE 'from any to [0-9a-f:]+::')
+          tbl_count=$(echo "$rules_out" | grep -cE 'from any to <__automatic_')
+          total=$((ip_v4_inline + ip_v6_inline + tbl_count))
+          echo "rule IPs: v4_inline=$ip_v4_inline v6_inline=$ip_v6_inline tables=$tbl_count (total=$total)"
+          if [ "$total" -eq 0 ]; then
+            echo "FAIL: sentinel anchor loaded but contains 0 block-target IPs/tables"
+            echo "--- anchor file content ---"
+            sudo cat /etc/pf.anchors/sentinel
+            exit 1
+          fi
+          echo "[OK] sentinel anchor loaded with $total resolved block target(s)"
+
+          # If pf promoted to tables, also dump them — useful debugging signal.
           tables=$(sudo pfctl -a sentinel -s Tables 2>/dev/null || true)
-          echo "$tables"
-          if [ -z "$tables" ]; then
-            echo "FAIL: no pf tables under sentinel anchor"
-            exit 1
+          if [ -n "$tables" ]; then
+            echo "--- pf tables (auto-promoted) ---"
+            echo "$tables"
+            for t in $tables; do
+              echo "IPs in $t:"
+              sudo pfctl -a sentinel -t "$t" -T show 2>&1 | head -10
+            done
+          else
+            echo "(no auto-promoted tables — IPs are inline in rules, expected for small lists)"
           fi
-          first_table=$(echo "$tables" | head -1)
-          echo "--- IPs in $first_table ---"
-          sudo pfctl -a sentinel -t "$first_table" -T show 2>&1 | head -10
-          ip_count=$(sudo pfctl -a sentinel -t "$first_table" -T show 2>/dev/null | wc -l | tr -d ' ')
-          if [ "$ip_count" = "0" ]; then
-            echo "FAIL: pf table $first_table has 0 IPs — strict refresh did not resolve example.com"
-            exit 1
-          fi
-          echo "[OK] pf table $first_table populated with $ip_count IP(s)"
 
       - name: Strict mode — verify proxy still blocks via DNS layer
         run: |
