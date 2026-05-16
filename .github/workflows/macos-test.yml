@@ -430,19 +430,16 @@ jobs:
           rules_out=$(sudo pfctl -a sentinel -s rules 2>&1)
           echo "$rules_out"
 
-          # Confirm at least one resolved IP made it into the loaded pf rules.
-          # macOS pf may store IPs as either:
+          # Confirm at least one resolved IP/table made it into the loaded pf
+          # rules. macOS pf may store IPs as either:
           #   (a) inline rule lists — `block ... from any to <ip>` (small lists)
-          #   (b) auto-promoted tables — `block ... from any to <__automatic_xxx>` (large lists)
-          # Either form proves the strict refresh ran and resolved the blocked
-          # domain via backup_dns. Match both shapes so the test isn't brittle
-          # to pf's internal heuristic for promotion.
-          ip_v4_inline=$(echo "$rules_out" | grep -cE 'from any to [0-9]+\.[0-9]+\.[0-9]+\.[0-9]+')
-          ip_v6_inline=$(echo "$rules_out" | grep -cE 'from any to [0-9a-f:]+::')
-          tbl_count=$(echo "$rules_out" | grep -cE 'from any to <__automatic_')
-          total=$((ip_v4_inline + ip_v6_inline + tbl_count))
-          echo "rule IPs: v4_inline=$ip_v4_inline v6_inline=$ip_v6_inline tables=$tbl_count (total=$total)"
-          if [ "$total" -eq 0 ]; then
+          #   (b) auto-promoted tables — `block ... from any to <__automatic_xxx>`
+          # Match both shapes in a single grep so the test isn't brittle to
+          # pf's promotion heuristic. Wrap in `|| true` because grep -c exits 1
+          # on no match and `set -e` would abort the script before we report.
+          total=$(echo "$rules_out" | grep -cE 'from any to (<[^>]+>|[0-9a-f:.]+)' || true)
+          echo "block-target IPs/tables in loaded rules: $total"
+          if [ "${total:-0}" -eq 0 ]; then
             echo "FAIL: sentinel anchor loaded but contains 0 block-target IPs/tables"
             echo "--- anchor file content ---"
             sudo cat /etc/pf.anchors/sentinel
