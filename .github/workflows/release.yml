@@ -5,11 +5,67 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 jobs:
+  # ---------------------------------------------------------------------------
+  # Create the GitHub release first, with auto-generated notes.
+  #
+  # Why a dedicated job rather than letting softprops create the release
+  # opportunistically inside the matrix:
+  #   - softprops/action-gh-release does not read the annotated tag message,
+  #     and without `generate_release_notes: true` it ships an empty body.
+  #     v0.2.0 and v0.3.0 both went out with empty notes for this reason
+  #     (the body was filled in by hand post-release).
+  #   - The matrix below runs 3 build jobs in parallel + 1 install.sh job.
+  #     If notes generation ran inside the matrix, racing calls would
+  #     overwrite each other's body — same shape of bug as today.
+  #
+  # Solution: one job, ahead of the matrix, that creates the release with
+  # `gh release create --generate-notes`. The flag uses GitHub's built-in
+  # algorithm (the same one the "Generate release notes" button in the web
+  # UI uses) — produces a "What's Changed" section listing merged PRs and
+  # contributors since the previous tag.
+  #
+  # The matrix jobs then upload binaries to the already-existing release,
+  # so softprops never has to invent a body.
+  # ---------------------------------------------------------------------------
+  create-release:
+    name: Create release with auto-generated notes
+    runs-on: ubuntu-latest
+    outputs:
+      release_url: ${{ steps.release.outputs.url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # --generate-notes needs prior tags to diff against
+
+      - name: Create or update release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # Idempotent: if the release already exists (e.g. a workflow re-run
+          # on the same tag), don't recreate it — just print the URL.
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; skipping creation."
+            url=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url -q .url)
+          else
+            gh release create "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$TAG" \
+              --generate-notes \
+              --verify-tag
+            url=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url -q .url)
+          fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Release URL: $url"
+
   build:
-    name: Build and Release
-    permissions:
-      contents: write
+    name: Build and upload binary
+    needs: create-release
     strategy:
       matrix:
         include:
@@ -30,7 +86,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -49,7 +105,7 @@ jobs:
         run: go test ./...
 
       - name: Upload Binary to Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: ${{ matrix.output_name }}
         env:
@@ -57,14 +113,13 @@ jobs:
 
   release-installer:
     name: Attach install.sh to Release
-    permissions:
-      contents: write
+    needs: create-release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Upload install.sh to Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: install.sh
         env:
