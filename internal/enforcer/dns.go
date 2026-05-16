@@ -2,6 +2,7 @@ package enforcer
 
 import (
 	"bufio"
+	"fmt"
 	"log"
 	"net"
 	"os/exec"
@@ -30,8 +31,11 @@ func (e *DNSEnforcer) Refresh() {}
 
 func (e *DNSEnforcer) Setup() error {
 	proxy.UpdateBlockedDomains(make(map[string]bool))
-	if runtime.GOOS == "darwin" {
+	switch runtime.GOOS {
+	case "darwin":
 		e.configureSystemDNS()
+	case "windows":
+		e.configureSystemDNSWindows()
 	}
 	return nil
 }
@@ -74,6 +78,64 @@ func (e *DNSEnforcer) configureSystemDNS() {
 		exec.Command("networksetup", args...).Run()
 	}
 	flushDNSCache()
+}
+
+// configureSystemDNSWindows is the Windows analogue of configureSystemDNS.
+// It points every "Up" physical adapter at the local DNS proxy via PowerShell's
+// Set-DnsClientServerAddress, mirroring the dns_failure_mode handling so a
+// crashed Sentinel still leaves the machine online when fail-open is set.
+func (e *DNSEnforcer) configureSystemDNSWindows() {
+	if upstream := detectSystemDNSWindows(); upstream != "" {
+		config.AutoSetPrimaryDNS(upstream)
+	}
+
+	cfg := config.GetConfig()
+	servers := []string{"127.0.0.1"}
+	if cfg.Settings.GetDNSFailureMode() == "open" {
+		if fallback := backupDNSHost(cfg.Settings.BackupDNS); fallback != "" {
+			servers = append(servers, fallback)
+		} else {
+			log.Printf("dns: dns_failure_mode is \"open\" but backup_dns (%s) cannot be used as OS-level fallback (must be a non-loopback IP on port 53); operating fail-closed", cfg.Settings.BackupDNS)
+		}
+	}
+
+	script := winSetDNSServersScript(servers)
+	if out, err := exec.Command("powershell", "-Command", script).CombinedOutput(); err != nil {
+		log.Printf("dns: windows DNS configuration failed: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	flushDNSCache()
+}
+
+// winSetDNSServersScript returns the PowerShell one-liner that points every
+// "Up" physical adapter at the given DNS server list. Idempotent — re-running
+// it on already-configured adapters is a no-op.
+func winSetDNSServersScript(servers []string) string {
+	quoted := make([]string, len(servers))
+	for i, s := range servers {
+		quoted[i] = "'" + s + "'"
+	}
+	return fmt.Sprintf(
+		`Get-NetAdapter -Physical | Where-Object Status -eq 'Up' | ForEach-Object { Set-DnsClientServerAddress -InterfaceIndex $_.ifIndex -ServerAddresses @(%s) }`,
+		strings.Join(quoted, ","),
+	)
+}
+
+// detectSystemDNSWindows returns the first non-loopback IPv4 DNS server
+// currently configured on any "Up" adapter, in host:port form. Returns ""
+// if none can be determined. Used to seed primary_dns at install time.
+func detectSystemDNSWindows() string {
+	script := `Get-DnsClientServerAddress -AddressFamily IPv4 | Where-Object { $_.ServerAddresses } | Select-Object -ExpandProperty ServerAddresses`
+	out, err := exec.Command("powershell", "-Command", script).Output()
+	if err != nil {
+		return ""
+	}
+	for _, srv := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		srv = strings.TrimSpace(srv)
+		if net.ParseIP(srv) != nil && !strings.HasPrefix(srv, "127.") {
+			return hostPort(srv, "53")
+		}
+	}
+	return ""
 }
 
 // backupDNSHost extracts a usable OS-level fallback host from a host:port DNS
