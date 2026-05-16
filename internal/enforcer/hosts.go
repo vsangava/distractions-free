@@ -18,6 +18,17 @@ const (
 	blockingIP6 = "::1"
 )
 
+// hostsLineSep is the line terminator used when emitting the hosts file.
+// Windows tools and editors expect CRLF in the system hosts file; everywhere
+// else uses LF. The reader (bufio.Scanner.Text) strips trailing \r, so a CRLF
+// hosts file round-trips correctly through parse/inject/write.
+var hostsLineSep = func() string {
+	if runtime.GOOS == "windows" {
+		return "\r\n"
+	}
+	return "\n"
+}()
+
 // subdomainPrefixes are prepended to each blocked domain because /etc/hosts
 // has no wildcard support. Keep this list to the most common prefixes to avoid
 // bloating the hosts file.
@@ -173,7 +184,11 @@ func writeHostsFile(path string, lines []string) error {
 	}
 	w := bufio.NewWriter(f)
 	for _, line := range lines {
-		fmt.Fprintln(w, line)
+		if _, err := w.WriteString(line + hostsLineSep); err != nil {
+			f.Close()
+			os.Remove(tmp)
+			return err
+		}
 	}
 	if err := w.Flush(); err != nil {
 		f.Close()

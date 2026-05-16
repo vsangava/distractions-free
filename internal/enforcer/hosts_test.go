@@ -2,6 +2,7 @@ package enforcer
 
 import (
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -155,6 +156,39 @@ func TestHostsEnforcer_DeactivateAllOnEmptyFile(t *testing.T) {
 	// DeactivateAll on a file with no managed block should be a no-op.
 	if err := e.DeactivateAll(); err != nil {
 		t.Fatalf("DeactivateAll on clean file: %v", err)
+	}
+}
+
+// TestHostsEnforcer_LineEndings asserts the writer uses CRLF on Windows and
+// LF elsewhere — Windows tools and editors expect \r\n in the system hosts
+// file. CRLF input round-trips because bufio.Scanner.Text strips trailing \r.
+func TestHostsEnforcer_LineEndings(t *testing.T) {
+	e := newTestEnforcer(t)
+	if err := e.Activate([]string{"youtube.com"}); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+
+	raw, err := os.ReadFile(e.hostsPath)
+	if err != nil {
+		t.Fatalf("read raw: %v", err)
+	}
+	got := string(raw)
+
+	if runtime.GOOS == "windows" {
+		if !strings.Contains(got, "\r\n") {
+			t.Errorf("Windows hosts file should contain CRLF; got bytes:\n%q", got)
+		}
+		// No bare LF (every \n must be preceded by \r).
+		for i, b := range raw {
+			if b == '\n' && (i == 0 || raw[i-1] != '\r') {
+				t.Errorf("bare LF at offset %d on Windows; got bytes:\n%q", i, got)
+				break
+			}
+		}
+	} else {
+		if strings.Contains(got, "\r\n") {
+			t.Errorf("non-Windows hosts file should not contain CRLF; got bytes:\n%q", got)
+		}
 	}
 }
 
